@@ -86,6 +86,7 @@ program
   .action(async (task: string) => {
     const registry = buildRegistry();
     const harness = new Harness(registry, {
+      task,
       cwd: ".",
       onEvent: (event) => {
         switch (event.type) {
@@ -142,6 +143,7 @@ program
       console.log(finalText);
       closePrompt();
     } catch (err: any) {
+      harness.endSession?.("abandoned");
       closePrompt();
       console.error(`Error: ${err.message}`);
       process.exit(1);

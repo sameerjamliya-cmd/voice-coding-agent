@@ -28,12 +28,18 @@ export interface CheckpointResult {
   message?: string;
 }
 
+export type SessionEndStatus = "completed" | "abandoned" | "max_iterations";
+
 // What the loop calls to run tools. Implemented directly by nothing in
 // Phase 1 — Phase 2's Harness wraps a ToolRegistry and implements this,
 // interposing approval gates, snapshotting, sandboxing, and checkpoint
 // validation between the loop's decision to call a tool and it actually
-// running.
+// running. recordIteration/endSession are optional: they exist only so
+// the loop can report session-level bookkeeping (round-trip count, final
+// status) to an observability layer that isn't part of Phase 1's contract.
 export interface ToolExecutor {
   execute(name: string, input: any): Promise<ToolResult>;
   checkpoint(task: string): Promise<CheckpointResult>;
+  recordIteration?(): void;
+  endSession?(status: SessionEndStatus): void;
 }

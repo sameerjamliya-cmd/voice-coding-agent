@@ -34,6 +34,7 @@ export async function runLoop(options: RunLoopOptions): Promise<string> {
   const tools = registry.toNormalizedTools();
 
   for (let i = 0; i < maxIterations; i++) {
+    harness.recordIteration?.();
     const response = await provider.complete(messages, tools, SYSTEM_PROMPT);
 
     const textBlocks = response.content.filter(
@@ -50,6 +51,7 @@ export async function runLoop(options: RunLoopOptions): Promise<string> {
     if (!response.wantsToolCall) {
       const checkpoint = await harness.checkpoint(task);
       if (checkpoint.action === "done") {
+        harness.endSession?.("completed");
         return textBlocks.map((b) => b.text).join("\n").trim();
       }
       messages.push({
@@ -87,5 +89,6 @@ export async function runLoop(options: RunLoopOptions): Promise<string> {
     messages.push({ role: "user", content: toolResultBlocks });
   }
 
+  harness.endSession?.("max_iterations");
   return "Reached max iterations without completing the task.";
 }
