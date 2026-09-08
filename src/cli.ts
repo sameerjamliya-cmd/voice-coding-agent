@@ -4,6 +4,8 @@ import { Command } from "commander";
 import { runLoop } from "./agent/loop.js";
 import { selectProvider } from "./llm/select-provider.js";
 import { ToolRegistry } from "./tools/registry.js";
+import { Harness } from "./harness/harness.js";
+import { closePrompt } from "./shared/terminal-prompt.js";
 
 import { readFileTool } from "./tools/read-file.js";
 import { writeFileTool } from "./tools/write-file.js";
@@ -79,10 +81,35 @@ const program = new Command();
 
 program
   .name("agent")
-  .description("Voice coding agent CLI (Phase 1: text loop)")
+  .description("Voice coding agent CLI (Phase 2: loop + harness)")
   .argument("<task>", "task for the agent to perform")
   .action(async (task: string) => {
     const registry = buildRegistry();
+    const harness = new Harness(registry, {
+      cwd: ".",
+      onEvent: (event) => {
+        switch (event.type) {
+          case "denylist_block":
+            console.log(`  ⛔ blocked "${event.command}" (${event.reason})`);
+            break;
+          case "checkpoint_running":
+            console.log("\n[harness] running checkpoint validation (full test suite)...");
+            break;
+          case "checkpoint_skipped":
+            console.log(`[harness] checkpoint skipped: ${event.reason}`);
+            break;
+          case "checkpoint_passed":
+            console.log("[harness] checkpoint passed.");
+            break;
+          case "checkpoint_failed":
+            console.log("[harness] checkpoint failed.");
+            break;
+          case "rollback":
+            console.log(`[harness] rolled back to ${event.sha.slice(0, 8)}`);
+            break;
+        }
+      },
+    });
 
     try {
       const provider = selectProvider();
@@ -90,6 +117,7 @@ program
         task,
         registry,
         provider,
+        harness,
         onEvent: (event) => {
           switch (event.type) {
             case "assistant_text":
@@ -112,7 +140,9 @@ program
 
       console.log("\n=== Final response ===");
       console.log(finalText);
+      closePrompt();
     } catch (err: any) {
+      closePrompt();
       console.error(`Error: ${err.message}`);
       process.exit(1);
     }

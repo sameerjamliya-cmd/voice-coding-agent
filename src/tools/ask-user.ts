@@ -1,6 +1,5 @@
-import { createInterface } from "node:readline/promises";
-import { stdin, stdout } from "node:process";
 import type { Tool } from "../agent/types.js";
+import { prompt } from "../shared/terminal-prompt.js";
 
 // The one tool that blocks the loop on real terminal input. Every other
 // tool is fire-and-forget; this one waits on a human before the loop
@@ -17,14 +16,11 @@ export const askUserTool: Tool = {
     required: ["question"],
   },
   execute: async (input: { question: string }) => {
-    const rl = createInterface({ input: stdin, output: stdout });
     try {
-      const answer = await rl.question(`\n? ${input.question}\n> `);
+      const answer = await prompt(`\n? ${input.question}\n> `);
       return { output: answer };
     } catch (err: any) {
       return { error: `Failed to read user input: ${err.message}` };
-    } finally {
-      rl.close();
     }
   },
 };

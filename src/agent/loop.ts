@@ -1,5 +1,6 @@
 import type { LLMProvider } from "../llm/provider.js";
 import type { ContentBlock, NormalizedMessage } from "../llm/types.js";
+import type { ToolExecutor } from "./types.js";
 import type { ToolRegistry } from "../tools/registry.js";
 
 const SYSTEM_PROMPT = `You are a coding agent operating in a CLI. You have access to tools for
@@ -14,6 +15,7 @@ export interface RunLoopOptions {
   task: string;
   registry: ToolRegistry;
   provider: LLMProvider;
+  harness: ToolExecutor;
   onEvent?: (event: LoopEvent) => void;
   maxIterations?: number;
 }
@@ -24,7 +26,7 @@ export type LoopEvent =
   | { type: "tool_result"; name: string; output?: string; error?: string };
 
 export async function runLoop(options: RunLoopOptions): Promise<string> {
-  const { task, registry, provider, onEvent, maxIterations = 25 } = options;
+  const { task, registry, provider, harness, onEvent, maxIterations = 25 } = options;
 
   const messages: NormalizedMessage[] = [
     { role: "user", content: [{ type: "text", text: task }] },
@@ -46,7 +48,15 @@ export async function runLoop(options: RunLoopOptions): Promise<string> {
     messages.push({ role: "assistant", content: response.content });
 
     if (!response.wantsToolCall) {
-      return textBlocks.map((b) => b.text).join("\n").trim();
+      const checkpoint = await harness.checkpoint(task);
+      if (checkpoint.action === "done") {
+        return textBlocks.map((b) => b.text).join("\n").trim();
+      }
+      messages.push({
+        role: "user",
+        content: [{ type: "text", text: checkpoint.message ?? "" }],
+      });
+      continue;
     }
 
     const toolCalls = response.content.filter(
@@ -57,9 +67,7 @@ export async function runLoop(options: RunLoopOptions): Promise<string> {
     for (const call of toolCalls) {
       onEvent?.({ type: "tool_call", name: call.name, input: call.input });
 
-      // TODO(Phase 2 / harness): tool calls execute directly here with no
-      // approval gate, sandboxing, or post-edit validation.
-      const result = await registry.execute(call.name, call.input);
+      const result = await harness.execute(call.name, call.input);
 
       onEvent?.({
         type: "tool_result",
