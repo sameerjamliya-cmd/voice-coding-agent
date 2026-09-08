@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { CheckpointResult, SessionEndStatus, ToolExecutor, ToolResult } from "../agent/types.js";
 import type { ToolRegistry } from "../tools/registry.js";
-import { confirm, prompt } from "../shared/terminal-prompt.js";
+import { choice, confirm } from "../shared/terminal-prompt.js";
 import { checkDenylist } from "./denylist.js";
 import { GitSnapshotManager } from "./snapshot.js";
 import { normalizeToolCall } from "./normalize.js";
@@ -135,10 +135,10 @@ export class Harness implements ToolExecutor {
     this.history.recordRollback(this.taskSnapshotDbId, validationId);
     this.onEvent?.({ type: "rollback", sha });
 
-    const answer = await prompt(
-      `\nValidation failed at checkpoint. Changes were rolled back to the pre-task snapshot (${sha.slice(0, 8)}).\n\n` +
-        `Test output:\n${result.error}\n\n` +
-        `What should happen next? (e.g. retry with a fix, abandon, or inspect manually)\n> `
+    const answer = await choice(
+      `Validation failed at checkpoint. Changes were rolled back to the pre-task snapshot (${sha.slice(0, 8)}).\n\n` +
+        `Test output:\n${result.error}`,
+      ["Retry", "Abandon", "Inspect it myself"]
     );
 
     return {
