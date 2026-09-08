@@ -14,7 +14,13 @@ export interface NormalizedTool {
   inputSchema: object;
 }
 
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+}
+
 export interface NormalizedResponse {
   content: ContentBlock[];
   wantsToolCall: boolean;
+  usage: TokenUsage;
 }

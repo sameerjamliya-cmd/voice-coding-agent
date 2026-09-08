@@ -14,10 +14,13 @@ export interface ReadinessResult {
   reason?: string;
 }
 
-// Per-task snapshotting: one commit before the task's mutations begin,
-// recorded as a rollback point. Individual mutating calls are NOT committed
-// separately — a validation failure at checkpoint reverts the whole task's
-// worth of changes via `git reset --hard` to that one commit.
+// taskSnapshotSha is fixed at the state right before the task's first
+// mutation and never moves — it's the target for automatic rollback on
+// validation failure, which reverts the whole task regardless of how many
+// per-call commits happened since. snapshotBeforeCall() additionally
+// commits before each undo-eligible call (write_file/edit_file/
+// delete_file/move_file), giving `agent undo` individually addressable
+// points to step back through one action at a time.
 export class GitSnapshotManager {
   private cwd: string;
   private repoReady = false;
@@ -96,6 +99,29 @@ export class GitSnapshotManager {
     return { ok: true };
   }
 
+  // Commits whatever's pending (from a previous call) and returns the
+  // resulting HEAD — the point this call, if undone later, would revert
+  // to. `created` is false when there was nothing pending (e.g. this is
+  // the first mutating call of the task and the tree is already clean
+  // from ensureReadyForMutation) — callers use it to avoid logging a
+  // redundant snapshot row on top of the task_start one.
+  async snapshotBeforeCall(label: string): Promise<{ sha: string; created: boolean }> {
+    await git("add -A", this.cwd);
+    const created = await this.commitIfNeeded(`Pre-mutation snapshot: before ${label}`);
+    const { stdout } = await git("rev-parse HEAD", this.cwd);
+    return { sha: stdout.trim(), created };
+  }
+
+  // Leaves no dangling uncommitted state at the end of a session that
+  // touched files — needed so `agent undo` can treat "any uncommitted
+  // changes present" as unambiguously the user's own, made outside the
+  // agent, rather than the agent's own final unlanded edit.
+  async finalizeSession(label: string): Promise<void> {
+    if (!this.hasSnapshot()) return;
+    await git("add -A", this.cwd);
+    await this.commitIfNeeded(`Session end: ${label}`);
+  }
+
   async rollback(): Promise<void> {
     if (!this.taskSnapshotSha) return;
     await git(`reset --hard ${this.taskSnapshotSha}`, this.cwd);
@@ -143,12 +169,14 @@ export class GitSnapshotManager {
     return stdout.trim().length > 0;
   }
 
-  private async commitIfNeeded(message: string): Promise<void> {
+  private async commitIfNeeded(message: string): Promise<boolean> {
     try {
       await git(`commit -m ${JSON.stringify(message)}`, this.cwd);
+      return true;
     } catch (err: any) {
       const output = `${err.stdout ?? ""}${err.stderr ?? ""}${err.message ?? ""}`;
       if (!/nothing to commit/i.test(output)) throw err;
+      return false;
     }
   }
 }

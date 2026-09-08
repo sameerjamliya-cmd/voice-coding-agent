@@ -34,6 +34,10 @@ export class ClaudeProvider implements LLMProvider {
       system,
       messages: messages.map(toAnthropicMessage),
       tools: tools.map(toAnthropicTool),
+      // Harness only ever acts on the first tool_use block in a response
+      // (see loop.ts) — this is a best-effort API-level hint toward that
+      // same behavior, not a substitute for the harness-level enforcement.
+      tool_choice: { type: "auto", disable_parallel_tool_use: true },
     });
 
     return fromAnthropicResponse(response);
@@ -85,5 +89,9 @@ function fromAnthropicResponse(response: Anthropic.Message): NormalizedResponse 
   return {
     content,
     wantsToolCall: response.stop_reason === "tool_use",
+    usage: {
+      inputTokens: response.usage.input_tokens,
+      outputTokens: response.usage.output_tokens,
+    },
   };
 }

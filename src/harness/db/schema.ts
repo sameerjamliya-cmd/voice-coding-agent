@@ -12,7 +12,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   ended_at TEXT,
   status TEXT,
   total_iterations INTEGER NOT NULL DEFAULT 0,
-  total_tool_calls INTEGER NOT NULL DEFAULT 0
+  total_tool_calls INTEGER NOT NULL DEFAULT 0,
+  total_tokens_used INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS tool_call_attempts (
@@ -46,7 +47,8 @@ CREATE TABLE IF NOT EXISTS snapshots (
   session_id TEXT NOT NULL,
   timestamp TEXT NOT NULL,
   git_sha TEXT NOT NULL,
-  trigger TEXT NOT NULL
+  trigger TEXT NOT NULL,
+  description TEXT
 );
 
 CREATE TABLE IF NOT EXISTS validations (
@@ -64,7 +66,8 @@ CREATE TABLE IF NOT EXISTS rollbacks (
   session_id TEXT NOT NULL,
   timestamp TEXT NOT NULL,
   reverted_to_snapshot_id INTEGER,
-  triggered_by_validation_id INTEGER
+  triggered_by_validation_id INTEGER,
+  triggered_by TEXT NOT NULL DEFAULT 'validation_failure'
 );
 
 CREATE TABLE IF NOT EXISTS approved_patterns (

@@ -35,6 +35,10 @@ export class OpenAIProvider implements LLMProvider {
         ...messages.flatMap(toOpenAIMessages),
       ],
       tools: tools.map(toOpenAITool),
+      // Harness only ever acts on the first tool call in a response (see
+      // loop.ts) — this is a best-effort API-level hint toward that same
+      // behavior, not a substitute for the harness-level enforcement.
+      parallel_tool_calls: false,
     });
 
     return fromOpenAICompletion(response);
@@ -123,5 +127,9 @@ function fromOpenAICompletion(response: OpenAI.Chat.Completions.ChatCompletion):
   return {
     content,
     wantsToolCall: response.choices[0]?.finish_reason === "tool_calls",
+    usage: {
+      inputTokens: response.usage?.prompt_tokens ?? 0,
+      outputTokens: response.usage?.completion_tokens ?? 0,
+    },
   };
 }

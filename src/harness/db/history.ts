@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 export type ApprovalDecision = "auto_approved" | "user_approved" | "user_denied";
 export type SnapshotTrigger = "task_start" | "pre_mutation";
 export type SessionStatus = "completed" | "abandoned" | "max_iterations";
+export type RollbackTrigger = "validation_failure" | "manual_undo";
 
 // Passive, complete audit trail of every harness decision — written as a
 // side effect of the decision itself, never read back by harness to
@@ -33,6 +34,12 @@ export class HistoryLog {
     this.db
       .prepare(`UPDATE sessions SET total_iterations = total_iterations + 1 WHERE id = ?`)
       .run(this.sessionId);
+  }
+
+  recordTokenUsage(cumulativeTotal: number): void {
+    this.db
+      .prepare(`UPDATE sessions SET total_tokens_used = ? WHERE id = ?`)
+      .run(cumulativeTotal, this.sessionId);
   }
 
   recordToolCallAttempt(toolName: string, input: unknown): number {
@@ -69,10 +76,12 @@ export class HistoryLog {
       .run(this.sessionId, toolCallAttemptId, now(), blocked ? 1 : 0, matchedRule);
   }
 
-  recordSnapshot(gitSha: string, trigger: SnapshotTrigger): number {
+  recordSnapshot(gitSha: string, trigger: SnapshotTrigger, description: string | null): number {
     const result = this.db
-      .prepare(`INSERT INTO snapshots (session_id, timestamp, git_sha, trigger) VALUES (?, ?, ?, ?)`)
-      .run(this.sessionId, now(), gitSha, trigger);
+      .prepare(
+        `INSERT INTO snapshots (session_id, timestamp, git_sha, trigger, description) VALUES (?, ?, ?, ?, ?)`
+      )
+      .run(this.sessionId, now(), gitSha, trigger, description);
     return Number(result.lastInsertRowid);
   }
 
@@ -91,13 +100,17 @@ export class HistoryLog {
     return Number(result.lastInsertRowid);
   }
 
-  recordRollback(revertedToSnapshotId: number | null, triggeredByValidationId: number | null): void {
+  recordRollback(
+    revertedToSnapshotId: number | null,
+    triggeredByValidationId: number | null,
+    triggeredBy: RollbackTrigger
+  ): void {
     this.db
       .prepare(
-        `INSERT INTO rollbacks (session_id, timestamp, reverted_to_snapshot_id, triggered_by_validation_id)
-         VALUES (?, ?, ?, ?)`
+        `INSERT INTO rollbacks (session_id, timestamp, reverted_to_snapshot_id, triggered_by_validation_id, triggered_by)
+         VALUES (?, ?, ?, ?, ?)`
       )
-      .run(this.sessionId, now(), revertedToSnapshotId, triggeredByValidationId);
+      .run(this.sessionId, now(), revertedToSnapshotId, triggeredByValidationId, triggeredBy);
   }
 }
 

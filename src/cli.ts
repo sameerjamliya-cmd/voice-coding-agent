@@ -5,6 +5,7 @@ import { runLoop } from "./agent/loop.js";
 import { selectProvider } from "./llm/select-provider.js";
 import { ToolRegistry } from "./tools/registry.js";
 import { Harness } from "./harness/harness.js";
+import { runUndo } from "./harness/undo.js";
 import { closePrompt } from "./shared/terminal-prompt.js";
 
 import { readFileTool } from "./tools/read-file.js";
@@ -34,7 +35,6 @@ import { readPackageManifestTool } from "./tools/read-package-manifest.js";
 import { listInstalledPackagesTool } from "./tools/list-installed-packages.js";
 
 import { askUserTool } from "./tools/ask-user.js";
-import { showDiffToUserTool } from "./tools/show-diff-to-user.js";
 
 function buildRegistry(): ToolRegistry {
   const registry = new ToolRegistry();
@@ -72,22 +72,29 @@ function buildRegistry(): ToolRegistry {
 
   // Interaction
   registry.register(askUserTool);
-  registry.register(showDiffToUserTool);
 
   return registry;
 }
 
 const program = new Command();
 
+program.name("agent").description("Voice coding agent CLI (Phase 2: loop + harness)");
+
 program
-  .name("agent")
-  .description("Voice coding agent CLI (Phase 2: loop + harness)")
+  .command("run", { isDefault: true })
+  .description("Run a task")
   .argument("<task>", "task for the agent to perform")
-  .action(async (task: string) => {
+  .option("--token-budget <n>", "soft token budget for this task before prompting", (v) => Number(v))
+  .option("--hard-ceiling-multiplier <n>", "hard-stop multiple of the token budget", (v) => Number(v))
+  .action(async (task: string, opts: { tokenBudget?: number; hardCeilingMultiplier?: number }) => {
     const registry = buildRegistry();
-    const harness = new Harness(registry, {
+    const harness = await Harness.create(registry, {
       task,
       cwd: ".",
+      configOverrides: {
+        tokenBudget: opts.tokenBudget,
+        hardCeilingMultiplier: opts.hardCeilingMultiplier,
+      },
       onEvent: (event) => {
         switch (event.type) {
           case "denylist_block":
@@ -143,7 +150,22 @@ program
       console.log(finalText);
       closePrompt();
     } catch (err: any) {
-      harness.endSession?.("abandoned");
+      await harness.endSession?.("abandoned");
+      closePrompt();
+      console.error(`Error: ${err.message}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("undo")
+  .description("Undo the agent's most recent change")
+  .option("--list", "show recent snapshots and choose one to revert to")
+  .action(async (opts: { list?: boolean }) => {
+    try {
+      await runUndo({ list: Boolean(opts.list), cwd: "." });
+      closePrompt();
+    } catch (err: any) {
       closePrompt();
       console.error(`Error: ${err.message}`);
       process.exit(1);
