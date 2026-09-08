@@ -67,13 +67,18 @@ export class HistoryLog {
       .run(this.sessionId, toolCallAttemptId, now(), decision, matchedPatternId);
   }
 
-  recordDenylistCheck(toolCallAttemptId: number, blocked: boolean, matchedRule: string | null): void {
+  recordDenylistCheck(
+    toolCallAttemptId: number,
+    matched: boolean,
+    matchedRule: string | null,
+    escalationDecision: string | null
+  ): void {
     this.db
       .prepare(
-        `INSERT INTO denylist_checks (session_id, tool_call_attempt_id, timestamp, blocked, matched_rule)
-         VALUES (?, ?, ?, ?, ?)`
+        `INSERT INTO denylist_checks (session_id, tool_call_attempt_id, timestamp, matched, matched_rule, escalation_decision)
+         VALUES (?, ?, ?, ?, ?, ?)`
       )
-      .run(this.sessionId, toolCallAttemptId, now(), blocked ? 1 : 0, matchedRule);
+      .run(this.sessionId, toolCallAttemptId, now(), matched ? 1 : 0, matchedRule, escalationDecision);
   }
 
   recordSnapshot(gitSha: string, trigger: SnapshotTrigger, description: string | null): number {
@@ -89,14 +94,16 @@ export class HistoryLog {
     checkpointTrigger: string,
     passed: boolean,
     outputSummary: string,
-    durationMs: number
+    durationMs: number,
+    originalTask: string,
+    summary: string
   ): number {
     const result = this.db
       .prepare(
-        `INSERT INTO validations (session_id, timestamp, checkpoint_trigger, passed, output_summary, duration_ms)
-         VALUES (?, ?, ?, ?, ?, ?)`
+        `INSERT INTO validations (session_id, timestamp, checkpoint_trigger, passed, output_summary, duration_ms, original_task, summary)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(this.sessionId, now(), checkpointTrigger, passed ? 1 : 0, outputSummary, durationMs);
+      .run(this.sessionId, now(), checkpointTrigger, passed ? 1 : 0, outputSummary, durationMs, originalTask, summary);
     return Number(result.lastInsertRowid);
   }
 

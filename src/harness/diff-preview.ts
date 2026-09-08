@@ -94,5 +94,11 @@ function previewMoveFile(input: { from: string; to: string }): string {
 }
 
 function previewRunCommand(input: { command: string }): string {
-  return `command: ${input.command}\ndenylist: no match`;
+  // Denylist status isn't reported here: by the time this preview shows,
+  // the command has already been through runDenylistEscalation (see
+  // harness.ts execute()), which — on any match — already warned the user
+  // with the specific rule and reason in its own prompt. Repeating a
+  // blanket "no match" here would be redundant on a clean command and
+  // actively misleading on one that matched but was approved anyway.
+  return `command: ${input.command}`;
 }

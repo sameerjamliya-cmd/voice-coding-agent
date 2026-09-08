@@ -3,10 +3,19 @@ import type { ContentBlock, NormalizedMessage } from "../llm/types.js";
 import type { ToolExecutor } from "./types.js";
 import type { ToolRegistry } from "../tools/registry.js";
 
+const MARK_TASK_COMPLETE = "mark_task_complete";
+
 const SYSTEM_PROMPT = `You are a coding agent operating in a CLI. You have access to tools for
 reading, writing, and editing files, running shell commands, listing
 directories, and searching file contents. Use them to accomplish the user's
-task. When you are done, reply with a concise final summary of what you did.
+task.
+
+When you believe the task is fully complete, call ${MARK_TASK_COMPLETE} —
+restate the original task and explain how your changes satisfy it. This is
+the only thing that triggers validation (the project's test suite). If you
+stop without calling it (a plain-text reply, or you get stuck), the loop
+just ends with no validation — so call it whenever you're claiming the task
+is actually done.
 
 Only one tool call is processed per turn, even if you propose several —
 propose exactly one action at a time and use its real result to decide
@@ -59,16 +68,10 @@ export async function runLoop(options: RunLoopOptions): Promise<string> {
     messages.push({ role: "assistant", content: response.content });
 
     if (!response.wantsToolCall) {
-      const checkpoint = await harness.checkpoint(task);
-      if (checkpoint.action === "done") {
-        await harness.endSession?.("completed");
-        return textBlocks.map((b) => b.text).join("\n").trim();
-      }
-      messages.push({
-        role: "user",
-        content: [{ type: "text", text: checkpoint.message ?? "" }],
-      });
-      continue;
+      // A plain-text ending with no mark_task_complete call is just the
+      // loop stopping — not a completion claim, so nothing to validate.
+      await harness.endSession?.("completed");
+      return textBlocks.map((b) => b.text).join("\n").trim();
     }
 
     const toolCalls = response.content.filter(
@@ -84,6 +87,46 @@ export async function runLoop(options: RunLoopOptions): Promise<string> {
     // being silently ignored.
     const toolResultBlocks: ContentBlock[] = [];
     const [call, ...dropped] = toolCalls;
+
+    if (call && call.name === MARK_TASK_COMPLETE) {
+      const originalTask: string = call.input?.original_task ?? task;
+      const summary: string = call.input?.summary ?? "";
+
+      onEvent?.({ type: "tool_call", name: call.name, input: call.input });
+
+      const checkpoint = await harness.checkpoint(originalTask, summary);
+
+      onEvent?.({
+        type: "tool_result",
+        name: call.name,
+        output: checkpoint.action === "done" ? (checkpoint.finalText ?? summary) : undefined,
+        error: checkpoint.action === "continue" ? checkpoint.message : undefined,
+      });
+
+      if (checkpoint.action === "done") {
+        await harness.endSession?.("completed");
+        return checkpoint.finalText ?? summary;
+      }
+
+      toolResultBlocks.push({
+        type: "tool_result",
+        toolCallId: call.id,
+        content: checkpoint.message ?? "",
+        isError: true,
+      });
+
+      for (const skipped of dropped) {
+        toolResultBlocks.push({
+          type: "tool_result",
+          toolCallId: skipped.id,
+          content: `Not processed — only one tool call is executed per turn, and ${call.name} was executed first. Propose this again in your next turn if it's still needed.`,
+          isError: false,
+        });
+      }
+
+      messages.push({ role: "user", content: toolResultBlocks });
+      continue;
+    }
 
     if (call) {
       onEvent?.({ type: "tool_call", name: call.name, input: call.input });

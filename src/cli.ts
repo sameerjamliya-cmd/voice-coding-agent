@@ -35,6 +35,7 @@ import { readPackageManifestTool } from "./tools/read-package-manifest.js";
 import { listInstalledPackagesTool } from "./tools/list-installed-packages.js";
 
 import { askUserTool } from "./tools/ask-user.js";
+import { markTaskCompleteTool } from "./tools/mark-task-complete.js";
 
 function buildRegistry(): ToolRegistry {
   const registry = new ToolRegistry();
@@ -72,6 +73,7 @@ function buildRegistry(): ToolRegistry {
 
   // Interaction
   registry.register(askUserTool);
+  registry.register(markTaskCompleteTool);
 
   return registry;
 }
@@ -97,9 +99,18 @@ program
       },
       onEvent: (event) => {
         switch (event.type) {
-          case "denylist_block":
-            console.log(`  ⛔ blocked "${event.command}" (${event.reason})`);
+          case "denylist_match": {
+            const label =
+              event.decision === "declined"
+                ? "declined"
+                : event.decision === "ran_anyway"
+                  ? "ran anyway"
+                  : event.decision === "edited_then_ran"
+                    ? "edited then ran"
+                    : "edited (now clean)";
+            console.log(`  ⚠ denylist match "${event.rule.name}" on "${event.command}" — ${label}`);
             break;
+          }
           case "checkpoint_running":
             console.log("\n[harness] running checkpoint validation (full test suite)...");
             break;

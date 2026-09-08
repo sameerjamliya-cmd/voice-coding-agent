@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { CheckpointResult, SessionEndStatus, TokenBudgetResult, ToolExecutor, ToolResult } from "../agent/types.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import { choice, confirm } from "../shared/terminal-prompt.js";
-import { checkDenylist } from "./denylist.js";
+import { checkDenylist, type DenylistMatch } from "./denylist.js";
 import { GitSnapshotManager } from "./snapshot.js";
 import { normalizeToolCall } from "./normalize.js";
 import { buildApprovalPreview } from "./diff-preview.js";
@@ -21,7 +21,7 @@ const GATED_TOOLS = new Set([...MUTATING_TOOLS, "run_command"]);
 const UNDO_TRACKED_TOOLS = new Set(["write_file", "edit_file", "delete_file", "move_file"]);
 
 export type HarnessEvent =
-  | { type: "denylist_block"; command: string; reason: string }
+  | { type: "denylist_match"; command: string; rule: DenylistMatch; decision: string }
   | { type: "checkpoint_running" }
   | { type: "checkpoint_skipped"; reason: string }
   | { type: "checkpoint_passed" }
@@ -79,11 +79,18 @@ export class Harness implements ToolExecutor {
     const attemptId = this.history.recordToolCallAttempt(name, input);
 
     if (name === "run_command" && typeof input?.command === "string") {
-      const reason = checkDenylist(input.command);
-      this.history.recordDenylistCheck(attemptId, Boolean(reason), reason);
-      if (reason) {
-        this.onEvent?.({ type: "denylist_block", command: input.command, reason });
-        return { error: `Blocked by harness denylist (${reason}): "${input.command}"` };
+      const outcome = await this.runDenylistEscalation(input.command);
+      this.history.recordDenylistCheck(
+        attemptId,
+        Boolean(outcome.matchedRule),
+        outcome.matchedRule?.name ?? null,
+        outcome.decision
+      );
+      if (outcome.declined) {
+        return { error: `User declined to run this command after a denylist warning (${outcome.matchedRule!.name}).` };
+      }
+      if (outcome.editedCommand) {
+        input = { ...input, command: outcome.editedCommand };
       }
     }
 
@@ -135,11 +142,61 @@ export class Harness implements ToolExecutor {
     return this.registry.execute(name, input);
   }
 
-  async checkpoint(task: string): Promise<CheckpointResult> {
+  // Every denylist match escalates to the user via the same ask_user
+  // choice() mechanism used everywhere else in harness — there is no
+  // absolute block at any severity level, the user always has final say.
+  // An edited command is re-checked before being accepted, in case the
+  // edit is still (or newly) dangerous.
+  private async runDenylistEscalation(command: string): Promise<{
+    matchedRule: DenylistMatch | null;
+    decision: string | null;
+    declined: boolean;
+    editedCommand: string | null;
+  }> {
+    let rule = checkDenylist(command, this.cwd);
+    const originalRule = rule;
+    if (!rule) {
+      return { matchedRule: null, decision: null, declined: false, editedCommand: null };
+    }
+
+    let currentCommand = command;
+    let editedCommand: string | null = null;
+
+    while (rule) {
+      const answer = await choice(
+        `⚠ This command matched a denylist rule: \`${rule.name}\` (${rule.category} — ${rule.reason}).\n\n` +
+          `Command: ${currentCommand}`,
+        ["Run it anyway", "Don't run it", "Let me edit the command first"]
+      );
+
+      if (answer === "Don't run it") {
+        this.onEvent?.({ type: "denylist_match", command: currentCommand, rule: originalRule!, decision: "declined" });
+        return { matchedRule: originalRule, decision: "declined", declined: true, editedCommand: null };
+      }
+
+      if (answer === "Let me edit the command first") {
+        const { prompt } = await import("../shared/terminal-prompt.js");
+        currentCommand = await prompt("Enter the revised command: ");
+        editedCommand = currentCommand;
+        rule = checkDenylist(currentCommand, this.cwd);
+        continue;
+      }
+
+      // "Run it anyway"
+      this.onEvent?.({ type: "denylist_match", command: currentCommand, rule: originalRule!, decision: "ran_anyway" });
+      return { matchedRule: originalRule, decision: editedCommand ? "edited_then_ran" : "ran_anyway", declined: false, editedCommand };
+    }
+
+    // The edited command no longer matches anything.
+    this.onEvent?.({ type: "denylist_match", command: currentCommand, rule: originalRule!, decision: "edited_clean" });
+    return { matchedRule: originalRule, decision: "edited_clean", declined: false, editedCommand };
+  }
+
+  async checkpoint(originalTask: string, summary: string): Promise<CheckpointResult> {
     if (!this.snapshots.hasSnapshot()) {
       // No mutating/run_command call happened this task — nothing changed,
-      // nothing to validate.
-      return { action: "done" };
+      // nothing to validate. The completion claim still stands.
+      return { action: "done", finalText: summary };
     }
 
     this.onEvent?.({ type: "checkpoint_running" });
@@ -152,16 +209,23 @@ export class Harness implements ToolExecutor {
       (/No "test" script found/.test(result.error!) || /ENOENT.*package\.json/.test(result.error!));
     if (isUnconfigured) {
       this.onEvent?.({ type: "checkpoint_skipped", reason: result.error! });
-      return { action: "done" };
+      return { action: "done", finalText: summary };
     }
 
     const passed = !result.error;
     const outputSummary = (passed ? result.output : result.error) ?? "";
-    const validationId = this.history.recordValidation("stop_reason", passed, outputSummary.slice(0, 4000), durationMs);
+    const validationId = this.history.recordValidation(
+      "mark_task_complete",
+      passed,
+      outputSummary.slice(0, 4000),
+      durationMs,
+      originalTask,
+      summary
+    );
 
     if (passed) {
       this.onEvent?.({ type: "checkpoint_passed" });
-      return { action: "done" };
+      return { action: "done", finalText: summary };
     }
 
     this.onEvent?.({ type: "checkpoint_failed", output: result.error! });

@@ -38,8 +38,9 @@ CREATE TABLE IF NOT EXISTS denylist_checks (
   session_id TEXT NOT NULL,
   tool_call_attempt_id INTEGER NOT NULL,
   timestamp TEXT NOT NULL,
-  blocked INTEGER NOT NULL,
-  matched_rule TEXT
+  matched INTEGER NOT NULL,
+  matched_rule TEXT,
+  escalation_decision TEXT
 );
 
 CREATE TABLE IF NOT EXISTS snapshots (
@@ -58,7 +59,9 @@ CREATE TABLE IF NOT EXISTS validations (
   checkpoint_trigger TEXT NOT NULL,
   passed INTEGER NOT NULL,
   output_summary TEXT,
-  duration_ms INTEGER
+  duration_ms INTEGER,
+  original_task TEXT,
+  summary TEXT
 );
 
 CREATE TABLE IF NOT EXISTS rollbacks (
