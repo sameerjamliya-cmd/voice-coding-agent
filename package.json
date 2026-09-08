@@ -1,0 +1,27 @@
+{
+  "name": "voice-coding-agent",
+  "version": "0.1.0",
+  "description": "CLI coding agent built on the base Anthropic SDK",
+  "type": "module",
+  "bin": {
+    "agent": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/cli.js",
+    "dev": "tsx src/cli.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1",
+    "commander": "^12.1.0",
+    "diff": "^9.0.0",
+    "dotenv": "^16.4.5",
+    "openai": "^7.10.0"
+  },
+  "devDependencies": {
+    "@types/diff": "^6.0.0",
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
