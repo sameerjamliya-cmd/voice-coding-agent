@@ -2,10 +2,12 @@ import type { LLMProvider } from "../llm/provider.js";
 import type { ContentBlock, NormalizedMessage } from "../llm/types.js";
 import type { ToolExecutor } from "./types.js";
 import type { ToolRegistry } from "../tools/registry.js";
+import type { Skill } from "../skills/types.js";
+import { composeSystemPrompt } from "../skills/compose-system-prompt.js";
 
 const MARK_TASK_COMPLETE = "mark_task_complete";
 
-const SYSTEM_PROMPT = `You are a coding agent operating in a CLI. You have access to tools for
+const BASE_SYSTEM_PROMPT = `You are a coding agent operating in a CLI. You have access to tools for
 reading, writing, and editing files, running shell commands, listing
 directories, and searching file contents. Use them to accomplish the user's
 task.
@@ -21,14 +23,12 @@ Only one tool call is processed per turn, even if you propose several —
 propose exactly one action at a time and use its real result to decide
 what to do next.`;
 
-// TODO(Phase 3 / skills): system prompt is currently static. Skill-matching
-// and dynamic injection based on task type will extend this.
-
 export interface RunLoopOptions {
   task: string;
   registry: ToolRegistry;
   provider: LLMProvider;
   harness: ToolExecutor;
+  skills?: Skill[];
   onEvent?: (event: LoopEvent) => void;
   maxIterations?: number;
 }
@@ -39,16 +39,17 @@ export type LoopEvent =
   | { type: "tool_result"; name: string; output?: string; error?: string };
 
 export async function runLoop(options: RunLoopOptions): Promise<string> {
-  const { task, registry, provider, harness, onEvent, maxIterations = 25 } = options;
+  const { task, registry, provider, harness, skills = [], onEvent, maxIterations = 25 } = options;
 
   const messages: NormalizedMessage[] = [
     { role: "user", content: [{ type: "text", text: task }] },
   ];
   const tools = registry.toNormalizedTools();
+  const systemPrompt = composeSystemPrompt(BASE_SYSTEM_PROMPT, skills);
 
   for (let i = 0; i < maxIterations; i++) {
     harness.recordIteration?.();
-    const response = await provider.complete(messages, tools, SYSTEM_PROMPT);
+    const response = await provider.complete(messages, tools, systemPrompt);
 
     const budget = await harness.checkTokenBudget?.(response.usage);
     if (budget?.action === "stop") {

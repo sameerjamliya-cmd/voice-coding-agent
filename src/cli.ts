@@ -36,8 +36,11 @@ import { listInstalledPackagesTool } from "./tools/list-installed-packages.js";
 
 import { askUserTool } from "./tools/ask-user.js";
 import { markTaskCompleteTool } from "./tools/mark-task-complete.js";
+import { createLoadSkillTool } from "./tools/load-skill.js";
+import { loadSkills } from "./skills/registry.js";
+import type { Skill } from "./skills/types.js";
 
-function buildRegistry(): ToolRegistry {
+function buildRegistry(skills: Skill[]): ToolRegistry {
   const registry = new ToolRegistry();
 
   // File operations
@@ -74,6 +77,7 @@ function buildRegistry(): ToolRegistry {
   // Interaction
   registry.register(askUserTool);
   registry.register(markTaskCompleteTool);
+  registry.register(createLoadSkillTool(skills));
 
   return registry;
 }
@@ -89,7 +93,8 @@ program
   .option("--token-budget <n>", "soft token budget for this task before prompting", (v) => Number(v))
   .option("--hard-ceiling-multiplier <n>", "hard-stop multiple of the token budget", (v) => Number(v))
   .action(async (task: string, opts: { tokenBudget?: number; hardCeilingMultiplier?: number }) => {
-    const registry = buildRegistry();
+    const skills = await loadSkills();
+    const registry = buildRegistry(skills);
     const harness = await Harness.create(registry, {
       task,
       cwd: ".",
@@ -137,6 +142,7 @@ program
         registry,
         provider,
         harness,
+        skills,
         onEvent: (event) => {
           switch (event.type) {
             case "assistant_text":
