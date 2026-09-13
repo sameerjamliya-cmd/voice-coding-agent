@@ -11,15 +11,16 @@ export const listDirectoryTool: Tool = {
     },
     required: ["path"],
   },
-  execute: async (input: { path: string }) => {
+  execute: async (input: { path?: string }) => {
+    const path = input.path ?? ".";
     try {
-      const entries = await readdir(input.path, { withFileTypes: true });
+      const entries = await readdir(path, { withFileTypes: true });
       const lines = entries
         .sort((a, b) => a.name.localeCompare(b.name))
         .map((e) => `${e.isDirectory() ? "d" : "-"} ${e.name}`);
       return { output: lines.length ? lines.join("\n") : "(empty directory)" };
     } catch (err: any) {
-      return { error: `Failed to list "${input.path}": ${err.message}` };
+      return { error: `Failed to list "${path}": ${err.message}` };
     }
   },
 };
