@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Coffee Subscription Service</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header class="hero">
+        <h1>Wake Up to Fresh Coffee Delivered to Your Door</h1>
+        <p>Join our coffee subscription service and enjoy a new blend every month!</p>
+        <a href="#signup" class="cta-button">Sign Up Now</a>
+    </header>
+    <section class="features">
+        <h2>Features</h2>
+        <ul>
+            <li>🌍 Sourced from the Best Coffee Regions</li>
+            <li>☕ Personalized Selections Based on Your Taste</li>
+            <li>🚚 Free Shipping on Every Order</li>
+            <li>💰 Flexible Plans - Cancel Anytime</li>
+        </ul>
+    </section>
+    <section id="signup" class="signup-form">
+        <h2>Sign Up for Your Coffee Subscription</h2>
+        <form id="form">
+            <label for="name">Name:</label>
+            <input type="text" id="name" name="name" required>
+            <label for="email">Email:</label>
+            <input type="email" id="email" name="email" required>
+            <label for="plan">Choose a Plan:</label>
+            <select id="plan" name="plan" required>
+                <option value="basic">Basic - 1 Bag/Month</option>
+                <option value="premium">Premium - 2 Bags/Month</option>
+                <option value="deluxe">Deluxe - 4 Bags/Month</option>
+            </select>
+            <button type="submit">Subscribe</button>
+        </form>
+    </section>
+    <script src="script.js"></script>
+</body>
+</html>
