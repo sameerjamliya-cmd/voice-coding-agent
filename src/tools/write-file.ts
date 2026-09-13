@@ -1,6 +1,7 @@
 import { writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { Tool } from "../agent/types.js";
+import { describeLiteralEscapeCorruption } from "./shared/detect-escaped-content.js";
 
 export const writeFileTool: Tool = {
   name: "write_file",
@@ -20,6 +21,10 @@ export const writeFileTool: Tool = {
     }
     if (typeof input.content !== "string") {
       return { error: `write_file requires a "content" string; received ${JSON.stringify(input.content)}` };
+    }
+    const corruption = describeLiteralEscapeCorruption(input.content);
+    if (corruption) {
+      return { error: `write_file refused to write "${input.path}": ${corruption}` };
     }
     try {
       await mkdir(dirname(input.path), { recursive: true });

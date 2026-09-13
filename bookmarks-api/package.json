@@ -1,1 +1,17 @@
-{\n  "name": "bookmarks-api",\n  "version": "1.0.0",\n  "main": "index.js",\n  "scripts": {\n    "test": "jest",\n    "start": "node index.js"\n  },\n  "dependencies": {\n    "express": "^4.17.1",\n    "sqlite3": "^5.0.2",\n    "body-parser": "^1.19.0"\n  },\n  "devDependencies": {\n    "jest": "^27.0.6"\n  }\n}
+{
+  "name": "bookmarks-api",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "jest",
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.17.1",
+    "sqlite3": "^5.0.2",
+    "body-parser": "^1.19.0"
+  },
+  "devDependencies": {
+    "jest": "^27.0.6"
+  }
+}

@@ -237,4 +237,83 @@ describe("loop + harness integration (via MockProvider)", () => {
     expect(result).toBe("Reached max iterations without completing the task.");
     expect(provider.callCount).toBe(3);
   });
+
+  it("circuit breaker: blocks a 3rd identical retry after 2 identical failures and escalates via ask_user-style choice", async () => {
+    const { choice } = await import("../src/shared/terminal-prompt.js");
+    (choice as ReturnType<typeof vi.fn>).mockClear();
+    (choice as ReturnType<typeof vi.fn>).mockImplementation(async (_q: string, options: string[]) => options[0]);
+
+    const failingExecute = vi.fn(async () => ({ error: "boom: same failure every time" }));
+    const failingTool: Tool = {
+      name: "toolFail",
+      description: "always fails the same way",
+      inputSchema: { type: "object", properties: {} },
+      execute: failingExecute,
+    };
+    const registry = new ToolRegistry();
+    registry.register(failingTool);
+
+    // The model proposes the exact same call on every turn — never varies
+    // the input in response to the failure.
+    const provider = new MockProvider((callIndex) => ({
+      content: [{ type: "tool_call", id: String(callIndex), name: "toolFail", input: { x: 1 } }],
+      wantsToolCall: true,
+      usage: usage(1, 1),
+    }));
+
+    // Capped at 3 turns: the mock model just keeps proposing the identical
+    // call forever, so without the cap the breaker would trip, reset, and
+    // (since the scripted "guidance" doesn't actually change the model's
+    // behavior) trip again — this test only needs to see it trip once.
+    const harness = await Harness.create(registry, { task: "test", cwd: repo.cwd });
+    await runLoop({ task: "test", registry, provider, harness, maxIterations: 3 });
+
+    // Only 2 identical attempts actually reach the tool — the 3rd is
+    // intercepted by the circuit breaker instead of running again.
+    expect(failingExecute).toHaveBeenCalledTimes(2);
+
+    const circuitBreakerCall = (choice as ReturnType<typeof vi.fn>).mock.calls.find(([q]: [string]) =>
+      q.includes("about to retry")
+    );
+    expect(circuitBreakerCall).toBeTruthy();
+    expect(circuitBreakerCall![1]).toEqual([
+      "Let me try a different approach myself and continue",
+      "Stop this task here",
+      "I'll look into it and give you new instructions",
+    ]);
+  });
+
+  it("circuit breaker: 'Stop this task here' ends the loop instead of continuing to retry", async () => {
+    const { choice } = await import("../src/shared/terminal-prompt.js");
+    (choice as ReturnType<typeof vi.fn>).mockClear();
+    (choice as ReturnType<typeof vi.fn>).mockImplementation(async (_q: string, options: string[]) =>
+      options.includes("Stop this task here") ? "Stop this task here" : options[0]
+    );
+
+    const failingExecute = vi.fn(async () => ({ error: "boom: same failure every time" }));
+    const failingTool: Tool = {
+      name: "toolFail",
+      description: "always fails the same way",
+      inputSchema: { type: "object", properties: {} },
+      execute: failingExecute,
+    };
+    const registry = new ToolRegistry();
+    registry.register(failingTool);
+
+    const provider = new MockProvider((callIndex) => ({
+      content: [{ type: "tool_call", id: String(callIndex), name: "toolFail", input: { x: 1 } }],
+      wantsToolCall: true,
+      usage: usage(1, 1),
+    }));
+
+    const harness = await Harness.create(registry, { task: "test", cwd: repo.cwd });
+    const result = await runLoop({ task: "test", registry, provider, harness, maxIterations: 10 });
+
+    expect(failingExecute).toHaveBeenCalledTimes(2);
+    expect(result).toMatch(/stopped/i);
+    // The 3rd turn's proposed call is what the circuit breaker intercepts —
+    // the model is asked for it, but it's never actually run, and no 4th
+    // turn happens after the user chose to stop.
+    expect(provider.callCount).toBe(3);
+  });
 });

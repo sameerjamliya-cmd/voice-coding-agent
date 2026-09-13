@@ -160,6 +160,11 @@ export async function runLoop(options: RunLoopOptions): Promise<string> {
         error: result.error,
       });
 
+      if (result.stop) {
+        await harness.endSession?.("abandoned");
+        return result.error ?? "Stopped after repeated identical tool-call failures.";
+      }
+
       let content = result.error ? `Error: ${result.error}` : result.output ?? "";
       if (dropped.length > 0) {
         const droppedNames = dropped.map((d) => d.name).join(", ");

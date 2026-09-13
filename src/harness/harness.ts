@@ -14,6 +14,19 @@ import { ApprovedPatternsStore } from "./db/approved-patterns.js";
 const MUTATING_TOOLS = new Set(["write_file", "edit_file", "delete_file", "move_file", "create_directory"]);
 const GATED_TOOLS = new Set([...MUTATING_TOOLS, "run_command"]);
 
+// Fires on the 3rd consecutive attempt at a normalized-identical call that
+// failed the previous two times in a row — well before the (much larger)
+// iteration cap, since the point here is fast diagnostic escalation, not a
+// last-resort safety net. Two failures is enough to know it isn't a fluke
+// without being trigger-happy on genuinely transient errors.
+const REPEATED_FAILURE_THRESHOLD = 2;
+
+const REPEATED_FAILURE_OPTIONS = [
+  "Let me try a different approach myself and continue",
+  "Stop this task here",
+  "I'll look into it and give you new instructions",
+] as const;
+
 // Only these four produce their own individually-undoable snapshot — see
 // PHASE_2_ENHANCEMENTS.md section 4. run_command and create_directory are
 // still gated and still covered by the task-level rollback-on-validation-
@@ -63,6 +76,13 @@ export class Harness implements ToolExecutor {
   private budgetAcknowledged = false;
   private mcpSourceServers: Map<string, string>;
 
+  // Consecutive-failure streak for the circuit breaker, keyed by the same
+  // normalized-call notion approval memory uses ("is this meaningfully the
+  // same call as before"). Reset to null on any success or any call that
+  // doesn't match the current streak's (tool, normalizedKey).
+  private failureStreak: { tool: string; normalizedKey: string; lastError: string | null; count: number } | null =
+    null;
+
   static async create(registry: ToolRegistry, options: HarnessOptions): Promise<Harness> {
     const config = await loadHarnessConfig(options.cwd ?? ".", options.configOverrides);
     return new Harness(registry, options, config);
@@ -86,7 +106,61 @@ export class Harness implements ToolExecutor {
   async execute(name: string, input: any): Promise<ToolResult> {
     const sourceServer = this.mcpSourceServers.get(name) ?? null;
     const attemptId = this.history.recordToolCallAttempt(name, input, sourceServer);
+    const normalizedKey = normalizeToolCall(name, input, this.cwd);
 
+    if (
+      this.failureStreak &&
+      this.failureStreak.tool === name &&
+      this.failureStreak.normalizedKey === normalizedKey &&
+      this.failureStreak.count >= REPEATED_FAILURE_THRESHOLD
+    ) {
+      const lastError = this.failureStreak.lastError;
+      const answer = await choice(
+        `The agent is about to retry "${name}" with the same input for the ${this.failureStreak.count + 1}${
+          this.failureStreak.count + 1 === 3 ? "rd" : "th"
+        } time in a row, after failing identically ${this.failureStreak.count} time(s) already.\n\n` +
+          `Input: ${JSON.stringify(input)}\n\nMost recent error:\n${lastError ?? "(no error message captured)"}`,
+        [...REPEATED_FAILURE_OPTIONS]
+      );
+      this.history.recordRepeatedFailureDetected(attemptId, name, normalizedKey, lastError, answer);
+      this.failureStreak = null;
+
+      if (answer === "Stop this task here") {
+        return {
+          error: `Task stopped: "${name}" failed identically ${REPEATED_FAILURE_THRESHOLD} times in a row and the user chose to stop rather than retry again.`,
+          stop: true,
+        };
+      }
+
+      return {
+        error:
+          `[harness] Blocked a repeated identical retry of "${name}" after ${REPEATED_FAILURE_THRESHOLD} identical failures — ` +
+          `did not run it a third time. User guidance: "${answer}". The last error was:\n${lastError ?? "(none captured)"}`,
+      };
+    }
+
+    const result = await this.executeGated(name, input, attemptId, sourceServer);
+
+    if (result.error) {
+      if (this.failureStreak && this.failureStreak.tool === name && this.failureStreak.normalizedKey === normalizedKey) {
+        this.failureStreak.count += 1;
+        this.failureStreak.lastError = result.error;
+      } else {
+        this.failureStreak = { tool: name, normalizedKey, lastError: result.error, count: 1 };
+      }
+    } else {
+      this.failureStreak = null;
+    }
+
+    return result;
+  }
+
+  private async executeGated(
+    name: string,
+    input: any,
+    attemptId: number,
+    sourceServer: string | null
+  ): Promise<ToolResult> {
     if (name === "run_command" && typeof input?.command === "string") {
       const outcome = await this.runDenylistEscalation(input.command);
       this.history.recordDenylistCheck(

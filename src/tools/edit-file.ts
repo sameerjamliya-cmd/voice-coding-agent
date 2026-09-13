@@ -1,5 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import type { Tool } from "../agent/types.js";
+import { describeLiteralEscapeCorruption } from "./shared/detect-escaped-content.js";
 
 export const editFileTool: Tool = {
   name: "edit_file",
@@ -32,6 +33,10 @@ export const editFileTool: Tool = {
     }
     if (typeof input.new_string !== "string") {
       return { error: `edit_file requires a "new_string" string; received ${JSON.stringify(input.new_string)}` };
+    }
+    const corruption = describeLiteralEscapeCorruption(input.new_string);
+    if (corruption) {
+      return { error: `edit_file refused to edit "${input.path}": ${corruption}` };
     }
     try {
       const content = await readFile(input.path, "utf-8");

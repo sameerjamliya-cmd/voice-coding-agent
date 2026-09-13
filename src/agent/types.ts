@@ -1,6 +1,11 @@
 export interface ToolResult {
   output?: string;
   error?: string;
+  // Set only by the harness's repeated-failure circuit breaker when the
+  // user explicitly chose to stop the task rather than let the model keep
+  // retrying. The loop must end the session on this signal rather than
+  // feeding the error back to the model as just another tool result.
+  stop?: boolean;
 }
 
 export interface ToolInputSchema {

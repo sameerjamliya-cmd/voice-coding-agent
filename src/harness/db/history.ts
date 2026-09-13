@@ -107,6 +107,21 @@ export class HistoryLog {
     return Number(result.lastInsertRowid);
   }
 
+  recordRepeatedFailureDetected(
+    toolCallAttemptId: number,
+    toolName: string,
+    normalizedKey: string,
+    lastError: string | null,
+    userChoice: string
+  ): void {
+    this.db
+      .prepare(
+        `INSERT INTO repeated_failures (session_id, tool_call_attempt_id, timestamp, tool_name, normalized_key, last_error, user_choice)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(this.sessionId, toolCallAttemptId, now(), toolName, normalizedKey, lastError, userChoice);
+  }
+
   recordRollback(
     revertedToSnapshotId: number | null,
     triggeredByValidationId: number | null,

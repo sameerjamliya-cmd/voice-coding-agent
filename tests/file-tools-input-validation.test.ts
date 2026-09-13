@@ -145,5 +145,50 @@ describe("tool input validation", () => {
       expect(stats.isFile()).toBe(true);
       expect(await readFile(targetPath, "utf-8")).toBe("created");
     });
+
+    it("write_file: multi-line content with real newlines round-trips byte-for-byte", async () => {
+      const targetPath = join(cwd, "roundtrip.json");
+      const content = '{\n  "name": "bookmarks-api",\n  "version": "1.0.0"\n}';
+      const result = await writeFileTool.execute({ path: targetPath, content });
+      expect(result.error).toBeUndefined();
+      const written = await readFile(targetPath, "utf-8");
+      expect(written).toBe(content);
+      expect(() => JSON.parse(written)).not.toThrow();
+    });
+
+    it("edit_file: multi-line new_string with real newlines round-trips byte-for-byte", async () => {
+      const targetPath = join(cwd, "roundtrip-edit.txt");
+      await writeFile(targetPath, "placeholder", "utf-8");
+      const newContent = "line one\nline two\nline three";
+      const result = await editFileTool.execute({ path: targetPath, old_string: "placeholder", new_string: newContent });
+      expect(result.error).toBeUndefined();
+      expect(await readFile(targetPath, "utf-8")).toBe(newContent);
+    });
+
+    it("write_file: refuses content that is double-escaped (literal \\n, no real newlines)", async () => {
+      const targetPath = join(cwd, "corrupted.json");
+      const corrupted = '{\\n  "name": "bookmarks-api",\\n  "version": "1.0.0"\\n}';
+      const result = await writeFileTool.execute({ path: targetPath, content: corrupted });
+      expect(result.error).toMatch(/literal.*\\n.*sequences/i);
+      // Must not have written the corrupted content to disk.
+      await expect(readFile(targetPath, "utf-8")).rejects.toThrow();
+    });
+
+    it("edit_file: refuses new_string that is double-escaped (literal \\n, no real newlines)", async () => {
+      const targetPath = join(cwd, "corrupted-edit.txt");
+      await writeFile(targetPath, "placeholder", "utf-8");
+      const corrupted = "line one\\nline two\\nline three";
+      const result = await editFileTool.execute({ path: targetPath, old_string: "placeholder", new_string: corrupted });
+      expect(result.error).toMatch(/literal.*\\n.*sequences/i);
+      expect(await readFile(targetPath, "utf-8")).toBe("placeholder");
+    });
+
+    it("write_file: a single literal \\n (e.g. documenting regex syntax) is not flagged as corruption", async () => {
+      const targetPath = join(cwd, "one-escape.txt");
+      const content = "the pattern uses \\n for newlines";
+      const result = await writeFileTool.execute({ path: targetPath, content });
+      expect(result.error).toBeUndefined();
+      expect(await readFile(targetPath, "utf-8")).toBe(content);
+    });
   });
 });

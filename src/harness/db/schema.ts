@@ -74,6 +74,17 @@ CREATE TABLE IF NOT EXISTS rollbacks (
   triggered_by TEXT NOT NULL DEFAULT 'validation_failure'
 );
 
+CREATE TABLE IF NOT EXISTS repeated_failures (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT NOT NULL,
+  tool_call_attempt_id INTEGER NOT NULL,
+  timestamp TEXT NOT NULL,
+  tool_name TEXT NOT NULL,
+  normalized_key TEXT NOT NULL,
+  last_error TEXT,
+  user_choice TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS approved_patterns (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   tool_name TEXT NOT NULL,
