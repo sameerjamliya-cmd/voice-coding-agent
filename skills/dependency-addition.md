@@ -20,6 +20,10 @@ always_on: false
 4. This skill governs judgment only — actually installing a package
    (`npm install` via `run_command`) still goes through harness's normal
    approval gate and denylist checks; this skill doesn't change that.
+5. When evaluating a candidate package's maintenance status (rule 2),
+   prefer checking via the package-registry or docs-search MCP tool (if
+   available) over relying on training-data familiarity, which may be
+   stale about how actively a package is currently maintained.
 
 ## Anti-pattern (do not do this)
 
