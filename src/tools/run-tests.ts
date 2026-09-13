@@ -6,7 +6,9 @@ import { runNpmScript } from "./shared/run-npm-script.js";
 // summary pattern matches.
 function summarize(output: string, exitCode: number): string {
   const summaryPatterns = [
-    /Tests:\s+.*$/m, // jest/vitest
+    /Tests:\s+.*$/m, // jest
+    /^\s*Test Files\s+.*$/m, // vitest
+    /^\s*Tests\s+\d+.*$/m, // vitest
     /\d+ passing.*$/m, // mocha
     /\d+ failing.*$/m, // mocha
     /# (pass|fail) \d+/gim, // node:test / tap
