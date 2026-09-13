@@ -19,9 +19,32 @@ export async function loadSkills(skillsDir: string = DEFAULT_SKILLS_DIR): Promis
     return [];
   }
 
-  const skills = await Promise.all(
-    files.map(async (file) => parseSkillFile(await readFile(join(skillsDir, file), "utf-8")))
-  );
+  // Sorted first so "first occurrence wins" on a duplicate name is
+  // deterministic rather than depending on filesystem readdir order.
+  files.sort();
+
+  const seenNames = new Set<string>();
+  const skills: Skill[] = [];
+
+  for (const file of files) {
+    let skill: Skill;
+    try {
+      skill = parseSkillFile(await readFile(join(skillsDir, file), "utf-8"));
+    } catch (err: any) {
+      // A single malformed skill file must not take down the whole index —
+      // skip it and keep going, same graceful-degradation instinct as an
+      // MCP server that fails to connect not crashing the rest of the agent.
+      console.warn(`[skills] skipping "${file}": ${err.message}`);
+      continue;
+    }
+
+    if (seenNames.has(skill.name)) {
+      console.warn(`[skills] skipping "${file}": duplicate skill name "${skill.name}" (first occurrence wins)`);
+      continue;
+    }
+    seenNames.add(skill.name);
+    skills.push(skill);
+  }
 
   return skills.sort((a, b) => a.name.localeCompare(b.name));
 }

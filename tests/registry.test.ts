@@ -53,4 +53,32 @@ describe("ToolRegistry", () => {
       { name: "foo", description: "test tool foo", inputSchema: { type: "object", properties: {} } },
     ]);
   });
+
+  it("converts every registered tool when multiple are present, preserving name/description/inputSchema per tool", () => {
+    const registry = new ToolRegistry();
+    registry.register(makeTool("foo"));
+    registry.register(makeTool("bar"));
+    const normalized = registry.toNormalizedTools();
+    expect(normalized).toHaveLength(2);
+    expect(normalized.map((t) => t.name).sort()).toEqual(["bar", "foo"]);
+    for (const tool of normalized) {
+      expect(tool.description).toBe(`test tool ${tool.name}`);
+      expect(tool.inputSchema).toEqual({ type: "object", properties: {} });
+    }
+  });
+
+  it("getAll() returns an empty array for a fresh registry", () => {
+    const registry = new ToolRegistry();
+    expect(registry.getAll()).toEqual([]);
+  });
+
+  it("getAll() returns every registered tool object for a populated registry", () => {
+    const registry = new ToolRegistry();
+    const foo = makeTool("foo");
+    const bar = makeTool("bar");
+    registry.register(foo);
+    registry.register(bar);
+    expect(registry.getAll()).toHaveLength(2);
+    expect(registry.getAll()).toEqual(expect.arrayContaining([foo, bar]));
+  });
 });
