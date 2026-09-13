@@ -21,7 +21,18 @@ is actually done.
 
 Only one tool call is processed per turn, even if you propose several —
 propose exactly one action at a time and use its real result to decide
-what to do next.`;
+what to do next.
+
+Loaded skills provide guidance, not absolute rules, and the task's own
+explicit instructions always take precedence over any skill's general
+guidance. If two loaded skills genuinely conflict in a way that changes
+the concrete next action, and the conflict is consequential (not just a
+stylistic preference), use ask_user to surface the tradeoff rather than
+silently picking one. As a soft default when a quick judgment call is
+needed: guidance related to correctness or safety (e.g. debugging,
+secure-coding, test-driven-fixing) takes precedence over guidance
+related to efficiency or style (e.g. performance-awareness,
+incremental-changes) when they genuinely conflict.`;
 
 export interface RunLoopOptions {
   task: string;

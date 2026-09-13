@@ -6,6 +6,7 @@ import { selectProvider } from "./llm/select-provider.js";
 import { ToolRegistry } from "./tools/registry.js";
 import { Harness } from "./harness/harness.js";
 import { runUndo } from "./harness/undo.js";
+import { runSkillsReport } from "./harness/skills-report.js";
 import { closePrompt } from "./shared/terminal-prompt.js";
 
 import { readFileTool } from "./tools/read-file.js";
@@ -204,6 +205,18 @@ program
       closePrompt();
     } catch (err: any) {
       closePrompt();
+      console.error(`Error: ${err.message}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("skills-report")
+  .description("Show per-skill load_skill usage vs. mark_task_complete validation pass rate")
+  .action(async () => {
+    try {
+      await runSkillsReport(".");
+    } catch (err: any) {
       console.error(`Error: ${err.message}`);
       process.exit(1);
     }
