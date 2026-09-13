@@ -33,6 +33,12 @@ export interface HarnessOptions {
   cwd?: string;
   onEvent?: (event: HarnessEvent) => void;
   configOverrides?: HarnessConfigOverrides;
+  // Registry tool name -> originating MCP server. Never trust a server's
+  // self-declared safety hints — every MCP-sourced tool is gated through
+  // the same approval-gate + memory flow as any other tool, regardless of
+  // what the server claims about itself. Only used for that gating
+  // decision and for source_server observability logging.
+  mcpSourceServers?: Map<string, string>;
 }
 
 // Sits between the loop's decision to call a tool and the tool actually
@@ -55,6 +61,7 @@ export class Harness implements ToolExecutor {
   private cumulativeTokens = 0;
   private sessionBudget: number | undefined;
   private budgetAcknowledged = false;
+  private mcpSourceServers: Map<string, string>;
 
   static async create(registry: ToolRegistry, options: HarnessOptions): Promise<Harness> {
     const config = await loadHarnessConfig(options.cwd ?? ".", options.configOverrides);
@@ -69,6 +76,7 @@ export class Harness implements ToolExecutor {
     this.onEvent = options.onEvent;
     this.config = config;
     this.sessionBudget = config.tokenBudget;
+    this.mcpSourceServers = options.mcpSourceServers ?? new Map();
 
     this.db = openHarnessDb(this.cwd);
     this.history = new HistoryLog(this.db, options.task);
@@ -76,7 +84,8 @@ export class Harness implements ToolExecutor {
   }
 
   async execute(name: string, input: any): Promise<ToolResult> {
-    const attemptId = this.history.recordToolCallAttempt(name, input);
+    const sourceServer = this.mcpSourceServers.get(name) ?? null;
+    const attemptId = this.history.recordToolCallAttempt(name, input, sourceServer);
 
     if (name === "run_command" && typeof input?.command === "string") {
       const outcome = await this.runDenylistEscalation(input.command);
@@ -94,21 +103,28 @@ export class Harness implements ToolExecutor {
       }
     }
 
-    if (!GATED_TOOLS.has(name)) {
+    const isMutatingOrCommand = GATED_TOOLS.has(name);
+    const isMcpTool = sourceServer !== null;
+
+    if (!isMutatingOrCommand && !isMcpTool) {
       return this.registry.execute(name, input);
     }
 
-    const hadSnapshot = this.snapshots.hasSnapshot();
-    const readiness = await this.snapshots.ensureReadyForMutation(confirm);
-    if (!readiness.ok) {
-      return { error: readiness.reason ?? "Harness blocked this call." };
-    }
-    if (!hadSnapshot && this.snapshots.hasSnapshot()) {
-      this.taskSnapshotDbId = this.history.recordSnapshot(
-        this.snapshots.getSnapshotSha()!,
-        "task_start",
-        "task start baseline"
-      );
+    // Snapshot/rollback readiness is only relevant to actual local
+    // mutations — an MCP call has no local git state to snapshot around.
+    if (isMutatingOrCommand) {
+      const hadSnapshot = this.snapshots.hasSnapshot();
+      const readiness = await this.snapshots.ensureReadyForMutation(confirm);
+      if (!readiness.ok) {
+        return { error: readiness.reason ?? "Harness blocked this call." };
+      }
+      if (!hadSnapshot && this.snapshots.hasSnapshot()) {
+        this.taskSnapshotDbId = this.history.recordSnapshot(
+          this.snapshots.getSnapshotSha()!,
+          "task_start",
+          "task start baseline"
+        );
+      }
     }
 
     const normalizedKey = normalizeToolCall(name, input, this.cwd);

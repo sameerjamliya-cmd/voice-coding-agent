@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS tool_call_attempts (
   session_id TEXT NOT NULL,
   timestamp TEXT NOT NULL,
   tool_name TEXT NOT NULL,
-  input_json TEXT NOT NULL
+  input_json TEXT NOT NULL,
+  source_server TEXT
 );
 
 CREATE TABLE IF NOT EXISTS approval_decisions (

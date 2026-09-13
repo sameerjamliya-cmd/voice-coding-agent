@@ -25,6 +25,15 @@ export function normalizeToolCall(toolName: string, input: any, cwd: string): st
   if (FILE_TARGET_TOOLS.has(toolName)) {
     return `${toolName}:${resolve(cwd, input?.path ?? "")}`;
   }
+  // MCP-sourced tools (registry name <server>__<tool>, see
+  // mcp/connect-servers.ts) are read-only by construction — only
+  // allowlisted, safe tools are ever registered — so approval memory is
+  // deliberately coarse: remembered per tool regardless of arguments,
+  // not per distinct query. A repeated docs-search or repo-read shouldn't
+  // re-prompt just because the search terms differ.
+  if (toolName.includes("__")) {
+    return `mcp:${toolName}`;
+  }
   // No hand-written rule for this tool yet — fall back to the full input,
   // which only ever matches an identical future call (conservative).
   return `${toolName}:${JSON.stringify(input)}`;

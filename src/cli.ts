@@ -39,8 +39,11 @@ import { markTaskCompleteTool } from "./tools/mark-task-complete.js";
 import { createLoadSkillTool } from "./tools/load-skill.js";
 import { loadSkills } from "./skills/registry.js";
 import type { Skill } from "./skills/types.js";
+import { loadMcpConfig } from "./mcp/config.js";
+import { connectMcpServers } from "./mcp/connect-servers.js";
+import type { Tool } from "./agent/types.js";
 
-function buildRegistry(skills: Skill[]): ToolRegistry {
+function buildRegistry(skills: Skill[], mcpTools: Tool[]): ToolRegistry {
   const registry = new ToolRegistry();
 
   // File operations
@@ -79,6 +82,10 @@ function buildRegistry(skills: Skill[]): ToolRegistry {
   registry.register(markTaskCompleteTool);
   registry.register(createLoadSkillTool(skills));
 
+  for (const tool of mcpTools) {
+    registry.register(tool);
+  }
+
   return registry;
 }
 
@@ -94,7 +101,17 @@ program
   .option("--hard-ceiling-multiplier <n>", "hard-stop multiple of the token budget", (v) => Number(v))
   .action(async (task: string, opts: { tokenBudget?: number; hardCeilingMultiplier?: number }) => {
     const skills = await loadSkills();
-    const registry = buildRegistry(skills);
+
+    const mcpConfig = await loadMcpConfig(".");
+    const mcp = await connectMcpServers(mcpConfig, (event) => {
+      if (event.type === "mcp_connected") {
+        console.log(`[mcp] connected to "${event.server}" (${event.toolCount} tool${event.toolCount === 1 ? "" : "s"} allowlisted)`);
+      } else {
+        console.log(`[mcp] failed to connect to "${event.server}": ${event.error}`);
+      }
+    });
+
+    const registry = buildRegistry(skills, mcp.tools);
     const harness = await Harness.create(registry, {
       task,
       cwd: ".",
@@ -102,6 +119,7 @@ program
         tokenBudget: opts.tokenBudget,
         hardCeilingMultiplier: opts.hardCeilingMultiplier,
       },
+      mcpSourceServers: mcp.sourceServers,
       onEvent: (event) => {
         switch (event.type) {
           case "denylist_match": {
@@ -165,9 +183,11 @@ program
 
       console.log("\n=== Final response ===");
       console.log(finalText);
+      await mcp.close();
       closePrompt();
     } catch (err: any) {
       await harness.endSession?.("abandoned");
+      await mcp.close();
       closePrompt();
       console.error(`Error: ${err.message}`);
       process.exit(1);

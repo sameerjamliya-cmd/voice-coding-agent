@@ -42,12 +42,12 @@ export class HistoryLog {
       .run(cumulativeTotal, this.sessionId);
   }
 
-  recordToolCallAttempt(toolName: string, input: unknown): number {
+  recordToolCallAttempt(toolName: string, input: unknown, sourceServer: string | null = null): number {
     const result = this.db
       .prepare(
-        `INSERT INTO tool_call_attempts (session_id, timestamp, tool_name, input_json) VALUES (?, ?, ?, ?)`
+        `INSERT INTO tool_call_attempts (session_id, timestamp, tool_name, input_json, source_server) VALUES (?, ?, ?, ?, ?)`
       )
-      .run(this.sessionId, now(), toolName, JSON.stringify(input));
+      .run(this.sessionId, now(), toolName, JSON.stringify(input), sourceServer);
     this.db
       .prepare(`UPDATE sessions SET total_tool_calls = total_tool_calls + 1 WHERE id = ?`)
       .run(this.sessionId);
