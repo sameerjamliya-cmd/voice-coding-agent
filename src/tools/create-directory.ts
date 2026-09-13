@@ -11,7 +11,10 @@ export const createDirectoryTool: Tool = {
     },
     required: ["path"],
   },
-  execute: async (input: { path: string }) => {
+  execute: async (input: { path?: string }) => {
+    if (typeof input.path !== "string") {
+      return { error: `create_directory requires a "path" string; received ${JSON.stringify(input.path)}` };
+    }
     try {
       await mkdir(input.path, { recursive: true });
       return { output: `Created directory "${input.path}"` };

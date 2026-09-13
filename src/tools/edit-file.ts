@@ -19,11 +19,20 @@ export const editFileTool: Tool = {
     required: ["path", "old_string", "new_string"],
   },
   execute: async (input: {
-    path: string;
-    old_string: string;
-    new_string: string;
+    path?: string;
+    old_string?: string;
+    new_string?: string;
     replace_all?: boolean;
   }) => {
+    if (typeof input.path !== "string") {
+      return { error: `edit_file requires a "path" string; received ${JSON.stringify(input.path)}` };
+    }
+    if (typeof input.old_string !== "string") {
+      return { error: `edit_file requires an "old_string" string; received ${JSON.stringify(input.old_string)}` };
+    }
+    if (typeof input.new_string !== "string") {
+      return { error: `edit_file requires a "new_string" string; received ${JSON.stringify(input.new_string)}` };
+    }
     try {
       const content = await readFile(input.path, "utf-8");
       const occurrences = content.split(input.old_string).length - 1;

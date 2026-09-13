@@ -17,7 +17,10 @@ export const runCommandTool: Tool = {
     },
     required: ["command"],
   },
-  execute: async (input: { command: string; cwd?: string }) => {
+  execute: async (input: { command?: string; cwd?: string }) => {
+    if (typeof input.command !== "string") {
+      return { error: `run_command requires a "command" string; received ${JSON.stringify(input.command)}` };
+    }
     try {
       const { stdout, stderr } = await execAsync(input.command, {
         cwd: input.cwd,

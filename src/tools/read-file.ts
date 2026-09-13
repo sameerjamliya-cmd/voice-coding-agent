@@ -11,7 +11,10 @@ export const readFileTool: Tool = {
     },
     required: ["path"],
   },
-  execute: async (input: { path: string }) => {
+  execute: async (input: { path?: string }) => {
+    if (typeof input.path !== "string") {
+      return { error: `read_file requires a "path" string; received ${JSON.stringify(input.path)}` };
+    }
     try {
       const content = await readFile(input.path, "utf-8");
       return { output: content };

@@ -13,7 +13,13 @@ export const moveFileTool: Tool = {
     },
     required: ["from", "to"],
   },
-  execute: async (input: { from: string; to: string }) => {
+  execute: async (input: { from?: string; to?: string }) => {
+    if (typeof input.from !== "string") {
+      return { error: `move_file requires a "from" string; received ${JSON.stringify(input.from)}` };
+    }
+    if (typeof input.to !== "string") {
+      return { error: `move_file requires a "to" string; received ${JSON.stringify(input.to)}` };
+    }
     try {
       await mkdir(dirname(input.to), { recursive: true });
       await rename(input.from, input.to);

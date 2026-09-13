@@ -24,7 +24,10 @@ export const getFileOutlineTool: Tool = {
     },
     required: ["path"],
   },
-  execute: async (input: { path: string }) => {
+  execute: async (input: { path?: string }) => {
+    if (typeof input.path !== "string") {
+      return { error: `get_file_outline requires a "path" string; received ${JSON.stringify(input.path)}` };
+    }
     try {
       const content = await readFile(input.path, "utf-8");
       const lines = content.split("\n");

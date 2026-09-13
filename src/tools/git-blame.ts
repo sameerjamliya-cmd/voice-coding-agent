@@ -12,6 +12,10 @@ export const gitBlameTool: Tool = {
     },
     required: ["path"],
   },
-  execute: async (input: { path: string; cwd?: string }) =>
-    runGit(`blame -- "${input.path}"`, input.cwd ?? "."),
+  execute: async (input: { path?: string; cwd?: string }) => {
+    if (typeof input.path !== "string") {
+      return { error: `git_blame requires a "path" string; received ${JSON.stringify(input.path)}` };
+    }
+    return runGit(`blame -- "${input.path}"`, input.cwd ?? ".");
+  },
 };

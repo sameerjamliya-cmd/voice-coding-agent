@@ -16,7 +16,10 @@ export const readMultipleFilesTool: Tool = {
     },
     required: ["paths"],
   },
-  execute: async (input: { paths: string[] }) => {
+  execute: async (input: { paths?: string[] }) => {
+    if (!Array.isArray(input.paths)) {
+      return { error: `read_multiple_files requires a "paths" array; received ${JSON.stringify(input.paths)}` };
+    }
     const sections = await Promise.all(
       input.paths.map(async (path) => {
         try {

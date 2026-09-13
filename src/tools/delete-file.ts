@@ -11,7 +11,10 @@ export const deleteFileTool: Tool = {
     },
     required: ["path"],
   },
-  execute: async (input: { path: string }) => {
+  execute: async (input: { path?: string }) => {
+    if (typeof input.path !== "string") {
+      return { error: `delete_file requires a "path" string; received ${JSON.stringify(input.path)}` };
+    }
     try {
       await unlink(input.path);
       return { output: `Deleted "${input.path}"` };

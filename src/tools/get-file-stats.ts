@@ -12,7 +12,10 @@ export const getFileStatsTool: Tool = {
     },
     required: ["path"],
   },
-  execute: async (input: { path: string }) => {
+  execute: async (input: { path?: string }) => {
+    if (typeof input.path !== "string") {
+      return { error: `get_file_stats requires a "path" string; received ${JSON.stringify(input.path)}` };
+    }
     try {
       const [stats, content] = await Promise.all([
         stat(input.path),

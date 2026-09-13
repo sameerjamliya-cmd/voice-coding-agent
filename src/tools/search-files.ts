@@ -15,7 +15,10 @@ export const searchFilesTool: Tool = {
     },
     required: ["pattern"],
   },
-  execute: async (input: { pattern: string; path?: string }) => {
+  execute: async (input: { pattern?: string; path?: string }) => {
+    if (typeof input.pattern !== "string") {
+      return { error: `search_files requires a "pattern" string; received ${JSON.stringify(input.pattern)}` };
+    }
     const searchPath = input.path ?? ".";
     try {
       const escaped = input.pattern.replace(/'/g, `'\\''`);

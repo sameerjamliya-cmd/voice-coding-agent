@@ -14,7 +14,13 @@ export const writeFileTool: Tool = {
     },
     required: ["path", "content"],
   },
-  execute: async (input: { path: string; content: string }) => {
+  execute: async (input: { path?: string; content?: string }) => {
+    if (typeof input.path !== "string") {
+      return { error: `write_file requires a "path" string; received ${JSON.stringify(input.path)}` };
+    }
+    if (typeof input.content !== "string") {
+      return { error: `write_file requires a "content" string; received ${JSON.stringify(input.content)}` };
+    }
     try {
       await mkdir(dirname(input.path), { recursive: true });
       await writeFile(input.path, input.content, "utf-8");
