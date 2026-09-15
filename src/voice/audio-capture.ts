@@ -7,6 +7,16 @@ export interface RecordingResult {
   filePath: string; // path to a temp .wav file
 }
 
+// sox's `silence` effect requires the level to stay continuously above the
+// onset threshold for the full onset duration — ordinary speech has enough
+// micro-dips (consonants, brief pauses) that a threshold much above ~1% of
+// full scale often never gets satisfied for typical laptop-mic RMS levels
+// (measurable via `rec -q out.wav trim 0 3 && sox out.wav -n stat`), which
+// makes recording hang forever waiting for speech it's already hearing.
+// Overridable per-machine/mic via env vars rather than requiring a rebuild.
+const SILENCE_THRESHOLD_PERCENT = process.env.VOICE_SILENCE_THRESHOLD ?? "1%";
+const SILENCE_STOP_DURATION_SECONDS = process.env.VOICE_SILENCE_DURATION ?? "2.0";
+
 // Records via sox's `rec` command, which stops on its own once ~2s of
 // silence follows the first sound above threshold — no hand-rolled silence
 // detection in JS. `sox`/`rec` must be installed separately (see README).
@@ -19,12 +29,24 @@ export function startRecording(signal: AbortSignal): Promise<RecordingResult> {
 
     const filePath = join(tmpdir(), `voice-agent-rec-${randomUUID()}.wav`);
 
-    // -q: quiet. `silence 1 0.1 3% 1 2.0 3%`: start recording on the first
-    // sound above 3% amplitude (after 0.1s), stop once 2.0s of audio below
-    // 3% amplitude follows.
-    const child = spawn("rec", ["-q", filePath, "silence", "1", "0.1", "3%", "1", "2.0", "3%"], {
-      stdio: "ignore",
-    });
+    // -q: quiet. `silence 1 0.1 <thresh> 1 <dur> <thresh>`: start recording
+    // on the first sound above threshold (after 0.1s), stop once <dur>
+    // seconds of audio below threshold follows.
+    const child = spawn(
+      "rec",
+      [
+        "-q",
+        filePath,
+        "silence",
+        "1",
+        "0.1",
+        SILENCE_THRESHOLD_PERCENT,
+        "1",
+        SILENCE_STOP_DURATION_SECONDS,
+        SILENCE_THRESHOLD_PERCENT,
+      ],
+      { stdio: "ignore" }
+    );
 
     let aborted = false;
     const onAbort = () => {

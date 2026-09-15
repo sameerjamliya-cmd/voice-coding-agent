@@ -25,6 +25,27 @@ Voice mode (`--voice`) needs two things beyond `npm install`:
   - macOS: `afplay` (built in)
   - Linux: `mpv` (recommended — plays the TTS API's mp3 output directly)
 
+#### Tuning the recording volume threshold
+
+Recording stops on silence via sox's `silence` effect, which needs the mic
+level to stay *continuously* above a threshold to register "speech started."
+Laptop mics vary a lot — if recording never stops (stuck at
+`● Listening...` indefinitely), your speaking volume likely isn't sustaining
+above the default `1%` threshold. Check your actual levels with:
+
+```bash
+rec -q /tmp/level-test.wav trim 0 3   # records 3s, speak normally
+sox /tmp/level-test.wav -n stat       # look at "RMS amplitude"
+```
+
+If RMS amplitude is well below `0.01` (1%), lower the threshold further via
+env vars (add to `.env` or export before running):
+
+```bash
+VOICE_SILENCE_THRESHOLD=0.5%   # onset/offset volume threshold (default: 1%)
+VOICE_SILENCE_DURATION=2.0     # seconds of sustained silence before stopping (default: 2.0)
+```
+
 ## Usage
 
 ```bash
