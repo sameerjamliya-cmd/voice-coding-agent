@@ -143,7 +143,10 @@ export class SpeechQueue {
         resolve();
       };
       child.on("exit", done);
-      child.on("error", done);
+      child.on("error", (err) => {
+        console.error(`[voice] playback failed (is ${bin} installed?): ${err.message}`);
+        done();
+      });
     });
   }
 
