@@ -7,7 +7,12 @@ import { ToolRegistry } from "./tools/registry.js";
 import { Harness } from "./harness/harness.js";
 import { runUndo } from "./harness/undo.js";
 import { runSkillsReport } from "./harness/skills-report.js";
-import { closePrompt } from "./shared/terminal-prompt.js";
+import { closePrompt, setVoiceIO } from "./shared/terminal-prompt.js";
+import { assertVoiceEnvReady, runVoiceSession } from "./voice/voice-session.js";
+import { InterruptManager } from "./voice/interrupt.js";
+import { SpeechQueue } from "./voice/tts-queue.js";
+import { startRecording } from "./voice/audio-capture.js";
+import { transcribe } from "./voice/stt.js";
 
 import { readFileTool } from "./tools/read-file.js";
 import { writeFileTool } from "./tools/write-file.js";
@@ -97,10 +102,25 @@ program.name("agent").description("Voice coding agent CLI (Phase 2: loop + harne
 program
   .command("run", { isDefault: true })
   .description("Run a task")
-  .argument("<task>", "task for the agent to perform")
+  .argument("[task]", "task for the agent to perform (optional with --voice, which can start in listening state)")
   .option("--token-budget <n>", "soft token budget for this task before prompting", (v) => Number(v))
   .option("--hard-ceiling-multiplier <n>", "hard-stop multiple of the token budget", (v) => Number(v))
-  .action(async (task: string, opts: { tokenBudget?: number; hardCeilingMultiplier?: number }) => {
+  .option("--voice", "enable voice input/output for this session (hybrid — typed input still works)")
+  .action(async (task: string | undefined, opts: { tokenBudget?: number; hardCeilingMultiplier?: number; voice?: boolean }) => {
+    if (!task && !opts.voice) {
+      console.error("Error: a task is required unless --voice is passed.");
+      process.exit(1);
+    }
+
+    if (opts.voice) {
+      try {
+        assertVoiceEnvReady();
+      } catch (err: any) {
+        console.error(`Error: ${err.message}`);
+        process.exit(1);
+      }
+    }
+
     const skills = await loadSkills();
 
     const mcpConfig = await loadMcpConfig(".");
@@ -113,51 +133,102 @@ program
     });
 
     const registry = buildRegistry(skills, mcp.tools);
-    const harness = await Harness.create(registry, {
-      task,
-      cwd: ".",
-      configOverrides: {
-        tokenBudget: opts.tokenBudget,
-        hardCeilingMultiplier: opts.hardCeilingMultiplier,
-      },
-      mcpSourceServers: mcp.sourceServers,
-      onEvent: (event) => {
-        switch (event.type) {
-          case "denylist_match": {
-            const label =
-              event.decision === "declined"
-                ? "declined"
-                : event.decision === "ran_anyway"
-                  ? "ran anyway"
-                  : event.decision === "edited_then_ran"
-                    ? "edited then ran"
-                    : "edited (now clean)";
-            console.log(`  ⚠ denylist match "${event.rule.name}" on "${event.command}" — ${label}`);
-            break;
+
+    // Voice mode is set up before the first Harness is built so its onEvent
+    // handler below can speak checkpoint pass/fail outcomes through the
+    // same speech queue that everything else goes through.
+    const speechQueue = opts.voice ? new SpeechQueue(process.env.OPENAI_API_KEY!) : null;
+    const interruptManager = speechQueue ? new InterruptManager(speechQueue) : null;
+    if (interruptManager && speechQueue) {
+      setVoiceIO({
+        speak: (text) => speechQueue.enqueueSentence(text),
+        listen: async () => {
+          const controller = new AbortController();
+          const { filePath } = await startRecording(controller.signal);
+          return transcribe(filePath);
+        },
+      });
+      // Not started here: startKeyListener() must run after voice-session.ts
+      // creates its readline Interface, or the two race to bind Node's
+      // (idempotent, first-caller-wins) keypress decoder and the Interface
+      // loses — typed input then silently stops producing 'line' events.
+    }
+
+    const createHarness = (forTask: string) =>
+      Harness.create(registry, {
+        task: forTask,
+        cwd: ".",
+        configOverrides: {
+          tokenBudget: opts.tokenBudget,
+          hardCeilingMultiplier: opts.hardCeilingMultiplier,
+        },
+        mcpSourceServers: mcp.sourceServers,
+        onEvent: (event) => {
+          switch (event.type) {
+            case "denylist_match": {
+              const label =
+                event.decision === "declined"
+                  ? "declined"
+                  : event.decision === "ran_anyway"
+                    ? "ran anyway"
+                    : event.decision === "edited_then_ran"
+                      ? "edited then ran"
+                      : "edited (now clean)";
+              console.log(`  ⚠ denylist match "${event.rule.name}" on "${event.command}" — ${label}`);
+              break;
+            }
+            case "checkpoint_running":
+              console.log("\n[harness] running checkpoint validation (full test suite)...");
+              break;
+            case "checkpoint_skipped":
+              console.log(`[harness] checkpoint skipped: ${event.reason}`);
+              break;
+            case "checkpoint_passed":
+              console.log("[harness] checkpoint passed.");
+              speechQueue?.enqueueSentence("Validation passed.");
+              break;
+            case "checkpoint_failed":
+              console.log("[harness] checkpoint failed.");
+              speechQueue?.enqueueSentence("Validation failed. Changes were rolled back.");
+              break;
+            case "rollback":
+              console.log(`[harness] rolled back to ${event.sha.slice(0, 8)}`);
+              break;
           }
-          case "checkpoint_running":
-            console.log("\n[harness] running checkpoint validation (full test suite)...");
-            break;
-          case "checkpoint_skipped":
-            console.log(`[harness] checkpoint skipped: ${event.reason}`);
-            break;
-          case "checkpoint_passed":
-            console.log("[harness] checkpoint passed.");
-            break;
-          case "checkpoint_failed":
-            console.log("[harness] checkpoint failed.");
-            break;
-          case "rollback":
-            console.log(`[harness] rolled back to ${event.sha.slice(0, 8)}`);
-            break;
-        }
-      },
-    });
+        },
+      });
+
+    if (opts.voice && interruptManager && speechQueue) {
+      const provider = selectProvider();
+      try {
+        await runVoiceSession({
+          registry,
+          provider,
+          skills,
+          interruptManager,
+          speechQueue,
+          createHarness,
+          initialTask: task,
+        });
+        await mcp.close();
+        setVoiceIO(null);
+        closePrompt();
+      } catch (err: any) {
+        await mcp.close();
+        setVoiceIO(null);
+        closePrompt();
+        console.error(`Error: ${err.message}`);
+        process.exit(1);
+      }
+      return;
+    }
+
+    const harness = await createHarness(task!);
 
     try {
       const provider = selectProvider();
       const finalText = await runLoop({
-        task,
+        task: task!,
         registry,
         provider,
         harness,

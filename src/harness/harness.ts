@@ -5,7 +5,8 @@ import { choice, confirm } from "../shared/terminal-prompt.js";
 import { checkDenylist, type DenylistMatch } from "./denylist.js";
 import { GitSnapshotManager } from "./snapshot.js";
 import { normalizeToolCall } from "./normalize.js";
-import { buildApprovalPreview } from "./diff-preview.js";
+import { buildApprovalPreview, computeApprovalDiffContext } from "./diff-preview.js";
+import { generateSpokenApprovalPrompt } from "../voice/approval-phrasing.js";
 import { loadHarnessConfig, type HarnessConfig, type HarnessConfigOverrides } from "./config.js";
 import { openHarnessDb } from "./db/connection.js";
 import { HistoryLog } from "./db/history.js";
@@ -120,7 +121,9 @@ export class Harness implements ToolExecutor {
           this.failureStreak.count + 1 === 3 ? "rd" : "th"
         } time in a row, after failing identically ${this.failureStreak.count} time(s) already.\n\n` +
           `Input: ${JSON.stringify(input)}\n\nMost recent error:\n${lastError ?? "(no error message captured)"}`,
-        [...REPEATED_FAILURE_OPTIONS]
+        [...REPEATED_FAILURE_OPTIONS],
+        // Never speak the raw error/output text — just the outcome.
+        `${name} has failed identically ${this.failureStreak.count} times in a row. Try a different approach, stop the task, or give new instructions?`
       );
       this.history.recordRepeatedFailureDetected(attemptId, name, normalizedKey, lastError, answer);
       this.failureStreak = null;
@@ -213,7 +216,13 @@ export class Harness implements ToolExecutor {
       const preview = await buildApprovalPreview(name, input, this.cwd);
       if (preview) console.log(`\n${preview}`);
 
-      const approved = await confirm(`\nApprove ${name}(${JSON.stringify(input)})?`);
+      // Deterministic, templated spoken prompt for voice mode — reuses the
+      // diff stats diff-preview.ts already computed above rather than
+      // recomputing them, and never carries the raw diff/preview text
+      // itself into speech.
+      const diffContext = await computeApprovalDiffContext(name, input, this.cwd);
+      const spokenPrompt = generateSpokenApprovalPrompt(name, input, diffContext);
+      const approved = await confirm(`\nApprove ${name}(${JSON.stringify(input)})?`, spokenPrompt);
       if (!approved) {
         this.history.recordApprovalDecision(attemptId, "user_denied", null);
         return { error: `User declined to approve "${name}".` };
@@ -256,7 +265,9 @@ export class Harness implements ToolExecutor {
       const answer = await choice(
         `⚠ This command matched a denylist rule: \`${rule.name}\` (${rule.category} — ${rule.reason}).\n\n` +
           `Command: ${currentCommand}`,
-        ["Run it anyway", "Don't run it", "Let me edit the command first"]
+        ["Run it anyway", "Don't run it", "Let me edit the command first"],
+        // Never speak the raw command text — just the rule it matched.
+        `This command matched a safety rule: ${rule.name}. Run it anyway, don't run it, or edit it first?`
       );
 
       if (answer === "Don't run it") {
@@ -328,7 +339,9 @@ export class Harness implements ToolExecutor {
     const answer = await choice(
       `Validation failed at checkpoint. Changes were rolled back to the pre-task snapshot (${sha.slice(0, 8)}).\n\n` +
         `Test output:\n${result.error}`,
-      ["Retry", "Abandon", "Inspect it myself"]
+      ["Retry", "Abandon", "Inspect it myself"],
+      // Never speak the raw test output — just the pass/fail outcome.
+      "Validation failed and changes were rolled back. Retry, abandon, or inspect it yourself?"
     );
 
     return {

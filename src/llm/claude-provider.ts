@@ -26,19 +26,23 @@ export class ClaudeProvider implements LLMProvider {
   async complete(
     messages: NormalizedMessage[],
     tools: NormalizedTool[],
-    system: string
+    system: string,
+    signal?: AbortSignal
   ): Promise<NormalizedResponse> {
-    const response = await this.client.messages.create({
-      model: this.model,
-      max_tokens: 4096,
-      system,
-      messages: messages.map(toAnthropicMessage),
-      tools: tools.map(toAnthropicTool),
-      // Harness only ever acts on the first tool_use block in a response
-      // (see loop.ts) — this is a best-effort API-level hint toward that
-      // same behavior, not a substitute for the harness-level enforcement.
-      tool_choice: { type: "auto", disable_parallel_tool_use: true },
-    });
+    const response = await this.client.messages.create(
+      {
+        model: this.model,
+        max_tokens: 4096,
+        system,
+        messages: messages.map(toAnthropicMessage),
+        tools: tools.map(toAnthropicTool),
+        // Harness only ever acts on the first tool_use block in a response
+        // (see loop.ts) — this is a best-effort API-level hint toward that
+        // same behavior, not a substitute for the harness-level enforcement.
+        tool_choice: { type: "auto", disable_parallel_tool_use: true },
+      },
+      { signal }
+    );
 
     return fromAnthropicResponse(response);
   }

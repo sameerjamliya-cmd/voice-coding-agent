@@ -1,17 +1,24 @@
 import OpenAI from "openai";
 import type {
-  ChatCompletionMessageParam,
-  ChatCompletionTool,
-  ChatCompletionMessageFunctionToolCall,
-} from "openai/resources/chat/completions";
+  Response,
+  ResponseInputItem,
+  ResponseOutputItem,
+  Tool as ResponsesTool,
+} from "openai/resources/responses/responses";
 import type { LLMProvider } from "./provider.js";
 import type { ContentBlock, NormalizedMessage, NormalizedResponse, NormalizedTool } from "./types.js";
 
 const DEFAULT_MODEL = "gpt-4o";
 
-// All OpenAI-specific code — SDK types, chat-completions message shape,
-// function-calling tool schema, finish_reason semantics — is confined to
+// All OpenAI-specific code — SDK types, Responses API item shape,
+// function-calling tool schema, output-item semantics — is confined to
 // this file. Everything outside llm/ talks only in normalized types.
+//
+// Uses /v1/responses (client.responses.create), not /v1/chat/completions.
+// The full conversation is replayed as `input` items on every call (like
+// the Anthropic provider replays `messages`) rather than relying on
+// `previous_response_id` — this keeps the provider stateless the same way
+// ClaudeProvider is, with no server-side conversation state to manage.
 export class OpenAIProvider implements LLMProvider {
   name = "openai";
 
@@ -26,110 +33,100 @@ export class OpenAIProvider implements LLMProvider {
   async complete(
     messages: NormalizedMessage[],
     tools: NormalizedTool[],
-    system: string
+    system: string,
+    signal?: AbortSignal
   ): Promise<NormalizedResponse> {
-    const response = await this.client.chat.completions.create({
-      model: this.model,
-      messages: [
-        { role: "system", content: system },
-        ...messages.flatMap(toOpenAIMessages),
-      ],
-      tools: tools.map(toOpenAITool),
-      // Harness only ever acts on the first tool call in a response (see
-      // loop.ts) — this is a best-effort API-level hint toward that same
-      // behavior, not a substitute for the harness-level enforcement.
-      parallel_tool_calls: false,
-    });
+    const response = await this.client.responses.create(
+      {
+        model: this.model,
+        instructions: system,
+        input: messages.flatMap(toResponsesInputItems),
+        tools: tools.map(toResponsesTool),
+        // Harness only ever acts on the first tool call in a response (see
+        // loop.ts) — this is a best-effort API-level hint toward that same
+        // behavior, not a substitute for the harness-level enforcement.
+        parallel_tool_calls: false,
+      },
+      { signal }
+    );
 
-    return fromOpenAICompletion(response);
+    return fromResponsesAPI(response);
   }
 }
 
-function toOpenAITool(tool: NormalizedTool): ChatCompletionTool {
+function toResponsesTool(tool: NormalizedTool): ResponsesTool {
   return {
     type: "function",
-    function: {
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.inputSchema as Record<string, unknown>,
-    },
+    name: tool.name,
+    description: tool.description,
+    parameters: tool.inputSchema as Record<string, unknown>,
+    strict: false,
   };
 }
 
-// A single normalized message can expand into multiple OpenAI messages:
-// tool results become one standalone `role: "tool"` message each, rather
-// than staying nested inside the user turn the way Anthropic models them.
-function toOpenAIMessages(message: NormalizedMessage): ChatCompletionMessageParam[] {
-  if (message.role === "assistant") {
-    const text = message.content
-      .filter((b): b is Extract<ContentBlock, { type: "text" }> => b.type === "text")
-      .map((b) => b.text)
-      .join("\n");
-
-    const toolCalls: ChatCompletionMessageFunctionToolCall[] = message.content
-      .filter((b): b is Extract<ContentBlock, { type: "tool_call" }> => b.type === "tool_call")
-      .map((b) => ({
-        id: b.id,
-        type: "function",
-        function: { name: b.name, arguments: JSON.stringify(b.input) },
-      }));
-
-    return [
-      {
-        role: "assistant",
-        content: text || null,
-        ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
-      },
-    ];
-  }
-
-  const result: ChatCompletionMessageParam[] = [];
-
-  const text = message.content
-    .filter((b): b is Extract<ContentBlock, { type: "text" }> => b.type === "text")
-    .map((b) => b.text)
-    .join("\n");
-  if (text) {
-    result.push({ role: "user", content: text });
-  }
+// A single normalized message can expand into multiple Responses API input
+// items: a tool_call becomes a standalone `function_call` item and a
+// tool_result becomes a standalone `function_call_output` item, each
+// correlated back to its call via `call_id` — mirroring how the
+// chat-completions provider expands a tool result into its own `role:
+// "tool"` message rather than nesting it inside the turn.
+function toResponsesInputItems(message: NormalizedMessage): ResponseInputItem[] {
+  const items: ResponseInputItem[] = [];
 
   for (const block of message.content) {
-    if (block.type === "tool_result") {
-      result.push({ role: "tool", tool_call_id: block.toolCallId, content: block.content });
+    if (block.type === "text" && block.text) {
+      items.push({ role: message.role, content: block.text });
+    } else if (block.type === "tool_call") {
+      items.push({
+        type: "function_call",
+        call_id: block.id,
+        name: block.name,
+        arguments: JSON.stringify(block.input),
+      });
+    } else if (block.type === "tool_result") {
+      items.push({
+        type: "function_call_output",
+        call_id: block.toolCallId,
+        output: block.content,
+      });
     }
   }
 
-  return result;
+  return items;
 }
 
-function fromOpenAICompletion(response: OpenAI.Chat.Completions.ChatCompletion): NormalizedResponse {
-  const message = response.choices[0]?.message;
-  if (!message) {
-    throw new Error("OpenAI response contained no choices");
-  }
-
+function fromResponsesAPI(response: Response): NormalizedResponse {
   const content: ContentBlock[] = [];
+  let wantsToolCall = false;
 
-  if (message.content) {
-    content.push({ type: "text", text: message.content });
-  }
-
-  for (const toolCall of message.tool_calls ?? []) {
-    if (toolCall.type !== "function") continue;
-    content.push({
-      type: "tool_call",
-      id: toolCall.id,
-      name: toolCall.function.name,
-      input: JSON.parse(toolCall.function.arguments),
-    });
+  for (const item of response.output) {
+    if (isMessageItem(item)) {
+      for (const part of item.content) {
+        if (part.type === "output_text" && part.text) {
+          content.push({ type: "text", text: part.text });
+        }
+      }
+    } else if (item.type === "function_call") {
+      wantsToolCall = true;
+      content.push({
+        type: "tool_call",
+        id: item.call_id,
+        name: item.name,
+        input: item.arguments ? JSON.parse(item.arguments) : {},
+      });
+    }
   }
 
   return {
     content,
-    wantsToolCall: response.choices[0]?.finish_reason === "tool_calls",
+    wantsToolCall,
     usage: {
-      inputTokens: response.usage?.prompt_tokens ?? 0,
-      outputTokens: response.usage?.completion_tokens ?? 0,
+      inputTokens: response.usage?.input_tokens ?? 0,
+      outputTokens: response.usage?.output_tokens ?? 0,
     },
   };
+}
+
+function isMessageItem(item: ResponseOutputItem): item is Extract<ResponseOutputItem, { type: "message" }> {
+  return item.type === "message";
 }

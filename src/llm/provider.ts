@@ -5,6 +5,7 @@ export interface LLMProvider {
   complete(
     messages: NormalizedMessage[],
     tools: NormalizedTool[],
-    system: string
+    system: string,
+    signal?: AbortSignal
   ): Promise<NormalizedResponse>;
 }

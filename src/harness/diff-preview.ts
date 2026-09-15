@@ -89,6 +89,41 @@ async function previewDeleteFile(input: { path: string }, cwd: string): Promise<
   }
 }
 
+export interface ApprovalDiffContext {
+  linesChanged: number;
+  isNewFile?: boolean;
+}
+
+// Derives the small, spoken-safe summary (line count, new-vs-overwrite) that
+// approval-phrasing.ts needs, from the same preview text buildApprovalPreview
+// already renders for the terminal — so the diff itself is only ever
+// computed once, here.
+export async function computeApprovalDiffContext(
+  toolName: string,
+  input: any,
+  cwd: string
+): Promise<ApprovalDiffContext | undefined> {
+  if (toolName !== "edit_file" && toolName !== "write_file") return undefined;
+
+  const preview = await buildApprovalPreview(toolName, input, cwd);
+  if (!preview) return undefined;
+
+  if (toolName === "write_file") {
+    const isNewFile = preview.includes("(new file)");
+    const changedLines = preview
+      .split("\n")
+      .filter((l) => (l.startsWith("+") || l.startsWith("-")) && !l.startsWith("+++") && !l.startsWith("---")).length;
+    const linesChanged = isNewFile ? (input?.content ?? "").split("\n").length : changedLines;
+    return { linesChanged, isNewFile };
+  }
+
+  const changedLines = preview
+    .split("\n")
+    .filter((l) => (l.startsWith("+") || l.startsWith("-")) && !l.startsWith("+++") && !l.startsWith("---")).length;
+  if (changedLines === 0) return undefined;
+  return { linesChanged: changedLines };
+}
+
 function previewMoveFile(input: { from: string; to: string }): string {
   return `${input.from} -> ${input.to}`;
 }

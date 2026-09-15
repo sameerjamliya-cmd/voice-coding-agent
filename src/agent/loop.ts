@@ -1,5 +1,5 @@
 import type { LLMProvider } from "../llm/provider.js";
-import type { ContentBlock, NormalizedMessage } from "../llm/types.js";
+import type { ContentBlock, NormalizedMessage, NormalizedResponse } from "../llm/types.js";
 import type { ToolExecutor } from "./types.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { Skill } from "../skills/types.js";
@@ -42,6 +42,13 @@ secure-coding, test-driven-fixing) takes precedence over guidance
 related to efficiency or style (e.g. performance-awareness,
 incremental-changes) when they genuinely conflict.`;
 
+// Satisfied by voice/interrupt.ts's InterruptManager, but loop.ts stays
+// decoupled from the voice/ layer — it only needs this much of the shape.
+export interface LLMCallInterrupts {
+  beginLLMCall(): AbortSignal;
+  endLLMCall(): void;
+}
+
 export interface RunLoopOptions {
   task: string;
   registry: ToolRegistry;
@@ -50,6 +57,20 @@ export interface RunLoopOptions {
   skills?: Skill[];
   onEvent?: (event: LoopEvent) => void;
   maxIterations?: number;
+  // Voice-mode only. When set, wraps every provider.complete() call with an
+  // abortable signal so a tap-to-interrupt during an in-flight LLM call can
+  // cancel it outright (see voice/interrupt.ts).
+  interrupts?: LLMCallInterrupts;
+  // Voice-mode only. Updated around the tool-execution call so
+  // InterruptManager.handleInterrupt() can tell whether a tap landed while a
+  // tool was actively running (in which case the tap must not cancel it).
+  toolExecutionState?: { executing: boolean };
+  // Voice-mode only. Checked right after a tool result is appended to the
+  // conversation — the one safe point to inject a transcript that arrived
+  // via a tap during that tool's execution. Async because a queued tap
+  // means recording + transcribing is still in flight at that point; the
+  // loop awaits it here rather than racing ahead. Returns and clears it.
+  consumePendingInterrupt?: () => Promise<string | undefined>;
 }
 
 export type LoopEvent =
@@ -58,7 +79,18 @@ export type LoopEvent =
   | { type: "tool_result"; name: string; output?: string; error?: string };
 
 export async function runLoop(options: RunLoopOptions): Promise<string> {
-  const { task, registry, provider, harness, skills = [], onEvent, maxIterations = 25 } = options;
+  const {
+    task,
+    registry,
+    provider,
+    harness,
+    skills = [],
+    onEvent,
+    maxIterations = 25,
+    interrupts,
+    toolExecutionState,
+    consumePendingInterrupt,
+  } = options;
 
   const messages: NormalizedMessage[] = [
     { role: "user", content: [{ type: "text", text: task }] },
@@ -68,7 +100,13 @@ export async function runLoop(options: RunLoopOptions): Promise<string> {
 
   for (let i = 0; i < maxIterations; i++) {
     harness.recordIteration?.();
-    const response = await provider.complete(messages, tools, systemPrompt);
+    const signal = interrupts?.beginLLMCall();
+    let response: NormalizedResponse;
+    try {
+      response = await provider.complete(messages, tools, systemPrompt, signal);
+    } finally {
+      interrupts?.endLLMCall();
+    }
 
     const budget = await harness.checkTokenBudget?.(response.usage);
     if (budget?.action === "stop") {
@@ -145,13 +183,20 @@ export async function runLoop(options: RunLoopOptions): Promise<string> {
       }
 
       messages.push({ role: "user", content: toolResultBlocks });
+      await injectPendingInterrupt(messages, consumePendingInterrupt);
       continue;
     }
 
     if (call) {
       onEvent?.({ type: "tool_call", name: call.name, input: call.input });
 
-      const result = await harness.execute(call.name, call.input);
+      if (toolExecutionState) toolExecutionState.executing = true;
+      let result;
+      try {
+        result = await harness.execute(call.name, call.input);
+      } finally {
+        if (toolExecutionState) toolExecutionState.executing = false;
+      }
 
       onEvent?.({
         type: "tool_result",
@@ -192,8 +237,22 @@ export async function runLoop(options: RunLoopOptions): Promise<string> {
     }
 
     messages.push({ role: "user", content: toolResultBlocks });
+    await injectPendingInterrupt(messages, consumePendingInterrupt);
   }
 
   await harness.endSession?.("max_iterations");
   return "Reached max iterations without completing the task.";
+}
+
+// The one safe injection point during tool execution: right after that
+// tool's result is appended, before the loop calls provider.complete()
+// again. Never injected mid-tool-call.
+async function injectPendingInterrupt(
+  messages: NormalizedMessage[],
+  consumePendingInterrupt?: () => Promise<string | undefined>
+): Promise<void> {
+  const pending = await consumePendingInterrupt?.();
+  if (pending) {
+    messages.push({ role: "user", content: [{ type: "text", text: pending }] });
+  }
 }
