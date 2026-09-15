@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tick-Tock Game</title>
+    <style>
+        body { text-align: center; font-family: Arial, sans-serif; }
+        #board { display: grid; grid-template-columns: repeat(3, 100px); grid-gap: 5px; margin: 20px auto; }
+        .cell { width: 100px; height: 100px; background-color: #f0f0f0; font-size: 24px; line-height: 100px; cursor: pointer; }
+        .cell:hover { background-color: #e0e0e0; }
+        .winner { background-color: #a0e0a0; }
+        #message { margin-top: 20px; font-size: 20px; }
+    </style>
+</head>
+<body>
+    <h1>Tick-Tock Game</h1>
+    <div id="board"></div>
+    <div id="message"></div>
+    <script>
+        const board = document.getElementById('board');
+        const messageDiv = document.getElementById('message');
+        let currentPlayer = 'X';
+        let boardState = ['', '', '', '', '', '', '', '', ''];
+
+        function checkWinner() {
+            const winPatterns = [
+                [0, 1, 2], [3, 4, 5], [6, 7, 8],
+                [0, 3, 6], [1, 4, 7], [2, 5, 8],
+                [0, 4, 8], [2, 4, 6]
+            ];
+            for (const pattern of winPatterns) {
+                const [a, b, c] = pattern;
+                if (boardState[a] && boardState[a] === boardState[b] && boardState[a] === boardState[c]) {
+                    return boardState[a];
+                }
+            }
+            return null;
+        }
+
+        function renderBoard() {
+            board.innerHTML = '';
+            boardState.forEach((cell, index) => {
+                const cellDiv = document.createElement('div');
+                cellDiv.classList.add('cell');
+                cellDiv.innerText = cell;
+                cellDiv.onclick = () => handleCellClick(index);
+                board.appendChild(cellDiv);
+            });
+        }
+
+        function handleCellClick(index) {
+            if (boardState[index] || checkWinner()) {
+                return;
+            }
+            boardState[index] = currentPlayer;
+            const winner = checkWinner();
+            if (winner) {
+                messageDiv.innerText = `Player ${winner} wins!`;
+                boardState.forEach((_, i) => {
+                    if (boardState[i] === winner) {
+                        board.children[i].classList.add('winner');
+                    }
+                });
+            } else if (boardState.every(cell => cell)) {
+                messageDiv.innerText = 'It\u2019s a draw!';
+            } else {
+                currentPlayer = currentPlayer === 'X' ? 'O' : 'X';
+                messageDiv.innerText = `Next turn: Player ${currentPlayer}`;
+            }
+            renderBoard();
+        }
+
+        renderBoard();
+        messageDiv.innerText = `Next turn: Player ${currentPlayer}`;
+    </script>
+</body>
+</html>
