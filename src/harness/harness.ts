@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { CheckpointResult, SessionEndStatus, TokenBudgetResult, ToolExecutor, ToolResult } from "../agent/types.js";
 import type { ToolRegistry } from "../tools/registry.js";
-import { choice, confirm } from "../shared/terminal-prompt.js";
+import { choice, confirm, isVoiceModeActive } from "../shared/terminal-prompt.js";
 import { checkDenylist, type DenylistMatch } from "./denylist.js";
 import { GitSnapshotManager } from "./snapshot.js";
 import { normalizeToolCall } from "./normalize.js";
@@ -212,9 +212,14 @@ export class Harness implements ToolExecutor {
       this.history.recordApprovalDecision(attemptId, "auto_approved", match.id);
     } else {
       // Only the manual-approval path shows a preview — an auto-approved
-      // call skips it entirely, keeping that path fully low-friction.
+      // call skips it entirely, keeping that path fully low-friction. In
+      // voice mode the preview is still computed (diffContext below reuses
+      // it) but deliberately never printed — approval there is based
+      // solely on the spoken deterministic summary; 'v' (see
+      // voice-session.ts) is available on demand if the user wants to
+      // check before responding, but nothing is shown automatically.
       const preview = await buildApprovalPreview(name, input, this.cwd);
-      if (preview) console.log(`\n${preview}`);
+      if (preview && !isVoiceModeActive()) console.log(`\n${preview}`);
 
       // Deterministic, templated spoken prompt for voice mode — reuses the
       // diff stats diff-preview.ts already computed above rather than

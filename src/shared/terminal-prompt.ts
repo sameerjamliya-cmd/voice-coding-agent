@@ -33,6 +33,14 @@ export function setVoiceIO(io: VoiceIO | null): void {
   voiceIO = io;
 }
 
+// Lets other modules (harness.ts's approval gate) gate voice-mode-only
+// terminal behavior — e.g. suppressing the visual diff/content preview,
+// since voice mode approves off the spoken deterministic summary instead —
+// without needing their own separate "is voice mode on" plumbing.
+export function isVoiceModeActive(): boolean {
+  return voiceIO !== null;
+}
+
 export async function prompt(question: string): Promise<string> {
   if (voiceIO) {
     voiceIO.speak(question);

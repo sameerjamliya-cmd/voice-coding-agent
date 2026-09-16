@@ -184,6 +184,7 @@ describe("auto-approved calls skip the preview entirely", () => {
       choice: vi.fn(async (_q: string, options: string[]) => options[0]),
       prompt: vi.fn(async () => ""),
       closePrompt: vi.fn(),
+      isVoiceModeActive: vi.fn(() => false),
     }));
 
     const { Harness } = await import("../src/harness/harness.js");

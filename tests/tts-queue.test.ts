@@ -49,6 +49,13 @@ vi.mock("node:child_process", () => ({
 // Imported after the mocks above so tts-queue.ts picks up the mocked
 // modules rather than the real openai SDK / child_process.
 const { SpeechQueue } = await import("../src/voice/tts-queue.js");
+const { OpenAITTSProvider } = await import("../src/voice/tts-providers.js");
+
+// A fresh provider per test to match a fresh SpeechQueue — the mocked
+// "openai" module above backs its actual audio.speech.create call.
+function makeTestQueue() {
+  return new SpeechQueue(new OpenAITTSProvider("fake-key"));
+}
 
 function resolveSpeechFor(text: string): void {
   const call = pendingSpeechCalls.find((c) => c.text === text);
@@ -64,7 +71,7 @@ describe("SpeechQueue", () => {
   });
 
   it("plays sentences in index order even when a later sentence's TTS resolves first", async () => {
-    const queue = new SpeechQueue("fake-key");
+    const queue = makeTestQueue();
     const playedOrder: number[] = [];
 
     queue.enqueueSentence("first");
@@ -95,7 +102,7 @@ describe("SpeechQueue", () => {
   });
 
   it("never plays more than one slot at a time", async () => {
-    const queue = new SpeechQueue("fake-key");
+    const queue = makeTestQueue();
     queue.enqueueSentence("first");
     queue.enqueueSentence("second");
 
@@ -114,7 +121,7 @@ describe("SpeechQueue", () => {
   });
 
   it("drainAndStop kills active playback and prevents queued sentences from playing later", async () => {
-    const queue = new SpeechQueue("fake-key");
+    const queue = makeTestQueue();
     queue.enqueueSentence("first");
     queue.enqueueSentence("second");
     queue.enqueueSentence("third");
@@ -123,7 +130,7 @@ describe("SpeechQueue", () => {
     await vi.waitFor(() => expect(spawnedPlayers.length).toBe(1));
 
     queue.drainAndStop();
-    expect(spawnedPlayers[0].proc.kill).toHaveBeenCalled();
+    expect(spawnedPlayers[0].proc.kill).toHaveBeenCalledWith("SIGKILL");
 
     // Resolve the still-in-flight TTS for the remaining sentences after the
     // drain — they must never reach playback.
@@ -138,12 +145,12 @@ describe("SpeechQueue", () => {
   });
 
   it("drainAndStop is safe to call when the queue is empty", () => {
-    const queue = new SpeechQueue("fake-key");
+    const queue = makeTestQueue();
     expect(() => queue.drainAndStop()).not.toThrow();
   });
 
   it("aborts pending TTS requests for sentences that never became ready", async () => {
-    const queue = new SpeechQueue("fake-key");
+    const queue = makeTestQueue();
     queue.enqueueSentence("first");
     queue.enqueueSentence("second");
 

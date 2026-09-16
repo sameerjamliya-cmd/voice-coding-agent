@@ -49,6 +49,7 @@ vi.mock("../src/shared/terminal-prompt.js", () => ({
   choice: vi.fn(async (_q: string, options: string[]) => options[0]),
   prompt: vi.fn(async () => ""),
   closePrompt: vi.fn(),
+  isVoiceModeActive: vi.fn(() => false),
 }));
 
 describe("loop + harness integration (via MockProvider)", () => {

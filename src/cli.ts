@@ -11,6 +11,7 @@ import { closePrompt, setVoiceIO } from "./shared/terminal-prompt.js";
 import { assertVoiceEnvReady, runVoiceSession } from "./voice/voice-session.js";
 import { InterruptManager } from "./voice/interrupt.js";
 import { SpeechQueue } from "./voice/tts-queue.js";
+import { createTTSProvider } from "./voice/tts-providers.js";
 import { startRecording } from "./voice/audio-capture.js";
 import { transcribe } from "./voice/stt.js";
 
@@ -137,7 +138,7 @@ program
     // Voice mode is set up before the first Harness is built so its onEvent
     // handler below can speak checkpoint pass/fail outcomes through the
     // same speech queue that everything else goes through.
-    const speechQueue = opts.voice ? new SpeechQueue(process.env.OPENAI_API_KEY!) : null;
+    const speechQueue = opts.voice ? new SpeechQueue(createTTSProvider(process.env.OPENAI_API_KEY!)) : null;
     const interruptManager = speechQueue ? new InterruptManager(speechQueue) : null;
     if (interruptManager && speechQueue) {
       setVoiceIO({

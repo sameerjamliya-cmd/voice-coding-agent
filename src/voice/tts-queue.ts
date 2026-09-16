@@ -3,10 +3,7 @@ import { writeFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import OpenAI from "openai";
-
-const TTS_MODEL = "tts-1";
-const TTS_VOICE = "alloy";
+import type { TTSProvider } from "./tts-providers.js";
 
 interface QueueSlot {
   index: number;
@@ -35,15 +32,19 @@ export class SpeechQueue {
   private nextIndexToPlay = 0;
   private playing = false;
   private currentPlaybackProcess: ChildProcess | null = null;
-  private client: OpenAI;
+  private ttsProvider: TTSProvider;
   private readyWaiters: Array<() => void> = [];
   // Bumped by drainAndStop() so any in-flight playback worker started
   // before the drain notices it's stale and stops touching shared state
   // (nextIndexToPlay, slots) instead of corrupting whatever comes after.
   private generation = 0;
 
-  constructor(apiKey: string) {
-    this.client = new OpenAI({ apiKey });
+  // Takes a TTSProvider rather than an API key directly — this class has no
+  // idea (and doesn't need to) whether audio comes from OpenAI, ElevenLabs,
+  // or anything else. See tts-providers.ts's createTTSProvider() for how
+  // the active provider is selected (TTS_PROVIDER env var).
+  constructor(ttsProvider: TTSProvider) {
+    this.ttsProvider = ttsProvider;
   }
 
   enqueueSentence(text: string): void {
@@ -67,13 +68,7 @@ export class SpeechQueue {
 
   private async synthesize(slot: QueueSlot): Promise<void> {
     try {
-      const response = await this.client.audio.speech.create(
-        { model: TTS_MODEL, voice: TTS_VOICE, input: slot.text, response_format: "mp3" },
-        { signal: slot.ttsController.signal }
-      );
-      if (slot.ttsController.signal.aborted) return;
-
-      const buffer = Buffer.from(await response.arrayBuffer());
+      const buffer = await this.ttsProvider.synthesize(slot.text, slot.ttsController.signal);
       if (slot.ttsController.signal.aborted) return;
 
       const filePath = join(tmpdir(), `voice-agent-tts-${randomUUID()}.mp3`);
@@ -135,6 +130,9 @@ export class SpeechQueue {
   private play(filePath: string): Promise<void> {
     return new Promise((resolve) => {
       const { bin, args } = pickPlayer();
+      // Must stay synchronous with spawn() — no await between them — so an
+      // interrupt arriving in that window always finds a valid process
+      // reference to kill in drainAndStop(), never a stale null.
       const child = spawn(bin, args(filePath), { stdio: "ignore" });
       this.currentPlaybackProcess = child;
 
@@ -161,7 +159,10 @@ export class SpeechQueue {
       if (slot.status === "pending") slot.ttsController.abort();
     }
     if (this.currentPlaybackProcess) {
-      this.currentPlaybackProcess.kill();
+      // SIGKILL, not the default SIGTERM — some players (mpv in particular)
+      // don't respond to SIGTERM promptly, leaving an audible gap between
+      // the interrupt and audio actually stopping.
+      this.currentPlaybackProcess.kill("SIGKILL");
       this.currentPlaybackProcess = null;
     }
 
