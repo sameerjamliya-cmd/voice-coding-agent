@@ -23,7 +23,7 @@ export const searchFilesTool: Tool = {
     try {
       const escaped = input.pattern.replace(/'/g, `'\\''`);
       const { stdout } = await execAsync(
-        `grep -rn --exclude-dir=node_modules --exclude-dir=.git -E '${escaped}' '${searchPath}'`,
+        `grep -rn --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=.voice-agent -E '${escaped}' '${searchPath}'`,
         { maxBuffer: 10 * 1024 * 1024 }
       );
       return { output: stdout.trim() || "(no matches)" };

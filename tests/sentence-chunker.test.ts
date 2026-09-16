@@ -88,6 +88,74 @@ describe("SentenceChunker", () => {
 
     expect(chunks).toEqual([]);
   });
+
+  it("regression: no sentence is ever chunked twice across a realistic multi-piece stream", () => {
+    const sentences = [
+      "This is the first sentence.",
+      "Here comes the second one.",
+      "Now a third sentence arrives.",
+      "The fourth sentence follows next.",
+      "A fifth sentence keeps going.",
+      "Finally the sixth sentence ends it.",
+    ];
+    const fullText = sentences.join(" ");
+
+    // Small, sentence-sized pieces delivered across many push() calls — the
+    // shape of a real multi-event stream, not one big string at once.
+    const pieces = sentences.map((s, i) => (i === 0 ? s : ` ${s}`));
+
+    const chunks: string[] = [];
+    const chunker = new SentenceChunker();
+    for (const piece of pieces) {
+      chunker.push(piece, (c) => chunks.push(c));
+    }
+    chunker.flush((c) => chunks.push(c));
+
+    const transcript = chunks.join(" ").replace(/\s+/g, " ").trim();
+    expect(transcript).toBe(fullText);
+
+    // No sentence's distinctive text appears in more than one fired chunk.
+    for (const sentence of sentences) {
+      const occurrences = chunks.filter((c) => c.includes(sentence)).length;
+      expect(occurrences).toBe(1);
+    }
+  });
+
+  it("regression: a stream-end flush does not re-fire content a boundary check already flushed", () => {
+    // Exactly 2 sentences (== SENTENCES_PER_TTS_CHUNK) so push() fires the
+    // chunk on its own, leaving the internal buffer empty — flush() must
+    // then be a true no-op, not a re-emission of that same content.
+    const chunks: string[] = [];
+    const chunker = new SentenceChunker();
+
+    chunker.push("First sentence here. Second sentence here.", (c) => chunks.push(c));
+    expect(chunks).toEqual(["First sentence here. Second sentence here."]);
+
+    chunker.flush((c) => chunks.push(c));
+    expect(chunks).toEqual(["First sentence here. Second sentence here."]); // unchanged
+  });
+
+  it("flushes a trailing partial sentence (no terminating punctuation) at stream end instead of dropping it", () => {
+    const chunks: string[] = [];
+    const chunker = new SentenceChunker();
+
+    chunker.push("First sentence. Second sentence. trailing fragment with no period", (c) => chunks.push(c));
+    // The 2 complete sentences fire as a chunk; the fragment is left
+    // buffered until flush().
+    expect(chunks).toEqual(["First sentence. Second sentence."]);
+
+    chunker.flush((c) => chunks.push(c));
+    expect(chunks).toEqual(["First sentence. Second sentence.", "trailing fragment with no period"]);
+  });
+
+  it("fires exactly twice for 4 complete sentences, 2 sentences per call, in order", () => {
+    const chunks: string[] = [];
+    const chunker = new SentenceChunker();
+
+    chunker.push("One. Two. Three. Four.", (c) => chunks.push(c));
+
+    expect(chunks).toEqual(["One. Two.", "Three. Four."]);
+  });
 });
 
 describe("InterruptFollowUpMailbox", () => {

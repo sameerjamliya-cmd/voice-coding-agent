@@ -7,7 +7,10 @@ import { composeSystemPrompt } from "../skills/compose-system-prompt.js";
 
 const MARK_TASK_COMPLETE = "mark_task_complete";
 
-const BASE_SYSTEM_PROMPT = `You are a coding agent operating in a CLI. You have access to tools for
+// Exported for benchmark/diagnostics use (reconstructing exactly what
+// system prompt a given session actually received, without needing it
+// persisted anywhere) as well as anything else that needs the literal text.
+export const BASE_SYSTEM_PROMPT = `You are a coding agent operating in a CLI. You have access to tools for
 reading, writing, and editing files, running shell commands, listing
 directories, and searching file contents. Use them to accomplish the user's
 task.
@@ -19,6 +22,27 @@ or a README) — unless you already have sufficient context about this
 directory from earlier in the current session. Do not run commands or make
 assumptions about the project's structure, build system, or tooling before
 confirming what's actually present.
+
+Before taking your first action on any task, also briefly consider: does
+this task involve adding a new dependency or package (if so, load the
+\`dependency-addition\` skill first, before running any install command)?
+Is anything about the task's scope or intent genuinely ambiguous such that
+guessing wrong would materially change the outcome (if so, consult
+\`ask-when-ambiguous\`'s criteria before proceeding)? Relying on your own
+judgment to notice a skill is relevant is exactly what fails when a task
+gives you too little context to realize it — check explicitly rather than
+only when something reminds you to.
+
+If the content you are about to write is a question addressed to the user —
+including after investigating and still finding no real basis for a
+decision on something destructive or hard to reverse (see
+\`ask-when-ambiguous\`) — do not write it as your response text. A
+plain-text question ends the task immediately with no mechanism for the
+user to answer within it. Call the \`ask_user\` tool with that exact
+question instead; that is the only thing that actually blocks and waits
+for a response. Check this immediately before every plain-text reply you
+send: "is this a question I need answered before proceeding?" — if yes, it
+must go through \`ask_user\`, never through response text.
 
 When you believe the task is fully complete, call ${MARK_TASK_COMPLETE} —
 restate the original task and explain how your changes satisfy it. This is
@@ -74,7 +98,13 @@ export interface RunLoopOptions {
 }
 
 export type LoopEvent =
-  | { type: "assistant_text"; text: string }
+  // `final` is true when this text block is part of a plain-text ending
+  // (no tool call requested) — i.e. it is exactly the text that runLoop's
+  // return value will also carry for this iteration. Consumers that also
+  // act on the return value (voice-session.ts speaking it) need this flag
+  // to know the text already went out via this event and must not be
+  // re-spoken/re-processed from the return value too.
+  | { type: "assistant_text"; text: string; final?: boolean }
   | { type: "tool_call"; name: string; input: any }
   | { type: "tool_result"; name: string; output?: string; error?: string };
 
@@ -117,9 +147,10 @@ export async function runLoop(options: RunLoopOptions): Promise<string> {
     const textBlocks = response.content.filter(
       (b): b is Extract<ContentBlock, { type: "text" }> => b.type === "text"
     );
+    const isPlainTextEnding = !response.wantsToolCall;
     for (const block of textBlocks) {
       if (block.text.trim()) {
-        onEvent?.({ type: "assistant_text", text: block.text });
+        onEvent?.({ type: "assistant_text", text: block.text, final: isPlainTextEnding });
       }
     }
 

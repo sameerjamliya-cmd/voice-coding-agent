@@ -33,6 +33,69 @@ export function setVoiceIO(io: VoiceIO | null): void {
   voiceIO = io;
 }
 
+// Opt-in only — set exclusively by benchmark/runner.ts, and only when it
+// itself was launched with BENCHMARK_MODE=true against a disposable temp
+// directory. Never the default, never toggled from anywhere in the normal
+// CLI/voice paths. When active, every prompt/confirm/choice call in the app
+// resolves immediately instead of blocking on real stdin — a benchmark run
+// must complete unattended. This does NOT touch the denylist itself (see
+// harness.ts — a match still runs checkDenylist() and still gets logged via
+// recordDenylistCheck()); it only supplies a deterministic, conservative
+// answer to the escalation prompt that follows a match, the same way a
+// cautious human reviewer would, so the match is recorded as data rather
+// than silently skipped.
+let benchmarkAutoApprove = false;
+
+export function setBenchmarkAutoApprove(enabled: boolean): void {
+  benchmarkAutoApprove = enabled;
+}
+
+export function isBenchmarkAutoApproveActive(): boolean {
+  return benchmarkAutoApprove;
+}
+
+// Known bounded-choice option sets from harness.ts, matched by exact
+// content so each gets its own considered default rather than one blind
+// "always pick option 1" rule (option 1 is the *unsafe* choice for the
+// denylist-escalation set, in particular — "Run it anyway"). Any other
+// option set (currently only ask_user's caller-supplied `options`, which
+// have no fixed shape) falls through to the first option, since those are
+// authored task-specific choices, ordered by the calling code with no
+// universal "safe" one to detect by content.
+const CONSERVATIVE_CHOICE_OVERRIDES: Record<string, string> = {
+  // Denylist escalation (harness.ts's runDenylistEscalation) — decline the
+  // dangerous command rather than running it, but never edit-and-retry
+  // (that would need a prompt() free-text follow-up with no one to answer
+  // it).
+  "Run it anyway|Don't run it|Let me edit the command first": "Don't run it",
+  // Checkpoint validation failure (harness.ts's checkpoint()) — changes
+  // were already rolled back by this point; "Abandon" is the deterministic
+  // choice that lets the loop wrap up instead of looping on "Inspect it
+  // myself", which has no one to inspect anything.
+  "Retry|Abandon|Inspect it myself": "Abandon",
+  // Repeated identical tool-call failure (harness.ts's execute()) — stop
+  // rather than let the model spin on the same failing call indefinitely
+  // with no human available to redirect it.
+  "Let me try a different approach myself and continue|Stop this task here|I'll look into it and give you new instructions":
+    "Stop this task here",
+  // Token budget crossed (harness.ts's checkTokenBudget) — let the task
+  // keep going rather than stopping a benchmark task on a soft threshold;
+  // the hard ceiling above it still stops things automatically regardless.
+  "Continue|Stop here|Raise the limit for this task": "Continue",
+};
+
+function chooseBenchmarkDefault(options: string[]): string {
+  return CONSERVATIVE_CHOICE_OVERRIDES[options.join("|")] ?? options[0];
+}
+
+// Generic, deterministic stand-in for a human answering ask_user's
+// free-text question — content doesn't matter for benchmark scoring (the
+// ambiguous-scope task only checks *whether* ask_user was called, not what
+// it was told), but it must never block, and it must give the model enough
+// to continue rather than an empty string.
+const BENCHMARK_FREE_TEXT_ANSWER =
+  "Use your best judgment and proceed with the most reasonable, conventional interpretation.";
+
 // Lets other modules (harness.ts's approval gate) gate voice-mode-only
 // terminal behavior — e.g. suppressing the visual diff/content preview,
 // since voice mode approves off the spoken deterministic summary instead —
@@ -42,6 +105,7 @@ export function isVoiceModeActive(): boolean {
 }
 
 export async function prompt(question: string): Promise<string> {
+  if (benchmarkAutoApprove) return BENCHMARK_FREE_TEXT_ANSWER;
   if (voiceIO) {
     voiceIO.speak(question);
     try {
@@ -54,6 +118,7 @@ export async function prompt(question: string): Promise<string> {
 }
 
 export async function confirm(question: string, spokenOverride?: string): Promise<boolean> {
+  if (benchmarkAutoApprove) return true;
   if (voiceIO) {
     voiceIO.speak(spokenOverride ?? question);
     try {
@@ -91,6 +156,8 @@ function matchChoice(raw: string, options: string[]): string | null {
 // approval gate, via approval-phrasing.ts) substitute a short deterministic
 // question for voice instead of the terminal's more verbose one.
 export async function choice(question: string, options: string[], spokenOverride?: string): Promise<string> {
+  if (benchmarkAutoApprove) return chooseBenchmarkDefault(options);
+
   const menu = options.map((opt, i) => `  ${i + 1}) ${opt}`).join("\n");
 
   if (voiceIO) {

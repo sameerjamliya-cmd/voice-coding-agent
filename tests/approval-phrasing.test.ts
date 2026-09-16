@@ -54,4 +54,21 @@ describe("generateSpokenApprovalPrompt", () => {
     const command = "rm -rf node_modules && npm install";
     expect(generateSpokenApprovalPrompt("run_command", { command })).toBe(`Run: ${command}. Approve?`);
   });
+
+  it("is pure and deterministic — identical input always produces identical output", () => {
+    const cases: Array<[string, any, any?]> = [
+      ["edit_file", { path: "utils.ts" }, { linesChanged: 3 }],
+      ["write_file", { path: "new.txt" }, { linesChanged: 2, isNewFile: true }],
+      ["write_file", { path: "existing.txt" }, { linesChanged: 4, isNewFile: false }],
+      ["delete_file", { path: "old.txt" }],
+      ["move_file", { from: "a.ts", to: "b.ts" }],
+      ["run_command", { command: "npm test" }],
+    ];
+
+    for (const [name, input, diffContext] of cases) {
+      const first = generateSpokenApprovalPrompt(name, input, diffContext);
+      const second = generateSpokenApprovalPrompt(name, input, diffContext);
+      expect(second).toBe(first);
+    }
+  });
 });

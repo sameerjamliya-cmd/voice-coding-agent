@@ -43,7 +43,7 @@ function splitIntoSentences(text: string): string[] {
 // events with a fence straddling them) won't be matched. The current
 // providers deliver one complete text block per event, not token-by-token,
 // so this doesn't occur in practice today.
-function stripCodeForSpeech(text: string): string {
+export function stripCodeForSpeech(text: string): string {
   return text.replace(/```[\s\S]*?```/g, "").replace(/`[^`]*`/g, "");
 }
 
@@ -238,6 +238,16 @@ export async function runVoiceTurn(task: string, deps: VoiceSessionDeps): Promis
   });
 
   const chunker = new SentenceChunker();
+  // Set when an assistant_text event arrives with `final: true` — that
+  // text is exactly what runLoop's return value (finalText, below) will
+  // also carry for a plain-text ending. Without this guard, finalText gets
+  // pushed into the chunker a second time after the loop returns,
+  // re-enqueuing (and re-speaking) sentences that were already spoken via
+  // the onEvent callback during the loop. mark_task_complete/stop/
+  // max-iterations endings never set this — their return value was never
+  // emitted as an assistant_text event, so they still need the post-loop
+  // push below.
+  let finalTextAlreadySpoken = false;
 
   try {
     const finalText = await runLoop({
@@ -257,6 +267,7 @@ export async function runVoiceTurn(task: string, deps: VoiceSessionDeps): Promis
       consumePendingInterrupt: () => followUpMailbox.consume(),
       onEvent: (event: LoopEvent) => {
         if (event.type === "assistant_text") {
+          if (event.final) finalTextAlreadySpoken = true;
           chunker.push(event.text, (chunk) => speechQueue.enqueueSentence(chunk));
         } else if (event.type === "tool_call") {
           void displayToolCall(event.name, event.input);
@@ -271,7 +282,9 @@ export async function runVoiceTurn(task: string, deps: VoiceSessionDeps): Promis
       },
     });
 
-    chunker.push(finalText, (chunk) => speechQueue.enqueueSentence(chunk));
+    if (!finalTextAlreadySpoken) {
+      chunker.push(finalText, (chunk) => speechQueue.enqueueSentence(chunk));
+    }
     chunker.flush((chunk) => speechQueue.enqueueSentence(chunk));
 
     return finalText;
@@ -365,7 +378,14 @@ export async function runVoiceSession(options: RunVoiceSessionOptions): Promise<
       try {
         const harness = await createHarness(task);
         const finalText = await runVoiceTurn(task, { interruptManager, harness, ...deps });
-        console.log(`\n=== Final response ===\n${finalText}\n`);
+        // Same filter the speech path uses (stripCodeForSpeech, applied to
+        // every assistant_text event inside runVoiceTurn/SentenceChunker) —
+        // reused here so this summary print never shows code that the
+        // spoken response already omitted. No reveal option for this,
+        // unlike write_file/edit_file's hide-with-'v' behavior: this is
+        // inline prose, not a discrete tool call with content worth
+        // storing.
+        console.log(`\n=== Final response ===\n${stripCodeForSpeech(finalText)}\n`);
       } catch (err: any) {
         if (err instanceof TurnInterrupted) {
           nextTask = await err.followUpTask;

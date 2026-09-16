@@ -13,7 +13,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   status TEXT,
   total_iterations INTEGER NOT NULL DEFAULT 0,
   total_tool_calls INTEGER NOT NULL DEFAULT 0,
-  total_tokens_used INTEGER NOT NULL DEFAULT 0
+  total_tokens_used INTEGER NOT NULL DEFAULT 0,
+  benchmark_mode INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS tool_call_attempts (

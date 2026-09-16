@@ -53,6 +53,11 @@ export interface HarnessOptions {
   // what the server claims about itself. Only used for that gating
   // decision and for source_server observability logging.
   mcpSourceServers?: Map<string, string>;
+  // Set only by benchmark/runner.ts. Recorded on the session row so a
+  // benchmark run is never mistaken for real usage in later observability
+  // queries — it does not change any gating behavior here (auto-approval
+  // for benchmark runs is a terminal-prompt.ts concern, not harness's).
+  benchmarkMode?: boolean;
 }
 
 // Sits between the loop's decision to call a tool and the tool actually
@@ -84,6 +89,14 @@ export class Harness implements ToolExecutor {
   private failureStreak: { tool: string; normalizedKey: string; lastError: string | null; count: number } | null =
     null;
 
+  // Exposed for benchmark/runner.ts, which needs to query this exact
+  // session's rows out of the observability db after the run rather than
+  // guessing "the most recent session" (harmless in a fresh temp dir today,
+  // but this is the correct way to address it either way).
+  get sessionId(): string {
+    return this.history.sessionId;
+  }
+
   static async create(registry: ToolRegistry, options: HarnessOptions): Promise<Harness> {
     const config = await loadHarnessConfig(options.cwd ?? ".", options.configOverrides);
     return new Harness(registry, options, config);
@@ -100,7 +113,7 @@ export class Harness implements ToolExecutor {
     this.mcpSourceServers = options.mcpSourceServers ?? new Map();
 
     this.db = openHarnessDb(this.cwd);
-    this.history = new HistoryLog(this.db, options.task);
+    this.history = new HistoryLog(this.db, options.task, options.benchmarkMode ?? false);
     this.patterns = new ApprovedPatternsStore(this.db);
   }
 

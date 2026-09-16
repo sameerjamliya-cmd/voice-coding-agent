@@ -14,14 +14,14 @@ export type RollbackTrigger = "validation_failure" | "manual_undo";
 export class HistoryLog {
   readonly sessionId: string;
 
-  constructor(private db: DatabaseSync, task: string) {
+  constructor(private db: DatabaseSync, task: string, benchmarkMode: boolean = false) {
     this.sessionId = randomUUID();
     this.db
       .prepare(
-        `INSERT INTO sessions (id, task_description, started_at, status, total_iterations, total_tool_calls)
-         VALUES (?, ?, ?, 'in_progress', 0, 0)`
+        `INSERT INTO sessions (id, task_description, started_at, status, total_iterations, total_tool_calls, benchmark_mode)
+         VALUES (?, ?, ?, 'in_progress', 0, 0, ?)`
       )
-      .run(this.sessionId, task, now());
+      .run(this.sessionId, task, now(), benchmarkMode ? 1 : 0);
   }
 
   endSession(status: SessionStatus): void {

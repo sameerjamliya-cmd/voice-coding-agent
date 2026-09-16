@@ -3,7 +3,6 @@ import "dotenv/config";
 import { Command } from "commander";
 import { runLoop } from "./agent/loop.js";
 import { selectProvider } from "./llm/select-provider.js";
-import { ToolRegistry } from "./tools/registry.js";
 import { Harness } from "./harness/harness.js";
 import { runUndo } from "./harness/undo.js";
 import { runSkillsReport } from "./harness/skills-report.js";
@@ -15,86 +14,10 @@ import { createTTSProvider } from "./voice/tts-providers.js";
 import { startRecording } from "./voice/audio-capture.js";
 import { transcribe } from "./voice/stt.js";
 
-import { readFileTool } from "./tools/read-file.js";
-import { writeFileTool } from "./tools/write-file.js";
-import { editFileTool } from "./tools/edit-file.js";
-import { deleteFileTool } from "./tools/delete-file.js";
-import { moveFileTool } from "./tools/move-file.js";
-import { createDirectoryTool } from "./tools/create-directory.js";
-import { listDirectoryTool } from "./tools/list-directory.js";
-import { readMultipleFilesTool } from "./tools/read-multiple-files.js";
-
-import { searchFilesTool } from "./tools/search-files.js";
-import { getFileOutlineTool } from "./tools/get-file-outline.js";
-import { getFileStatsTool } from "./tools/get-file-stats.js";
-
-import { runCommandTool } from "./tools/run-command.js";
-import { runTestsTool } from "./tools/run-tests.js";
-import { runLinterTool } from "./tools/run-linter.js";
-import { typeCheckTool } from "./tools/type-check.js";
-
-import { gitStatusTool } from "./tools/git-status.js";
-import { gitDiffTool } from "./tools/git-diff.js";
-import { gitLogTool } from "./tools/git-log.js";
-import { gitBlameTool } from "./tools/git-blame.js";
-
-import { readPackageManifestTool } from "./tools/read-package-manifest.js";
-import { listInstalledPackagesTool } from "./tools/list-installed-packages.js";
-
-import { askUserTool } from "./tools/ask-user.js";
-import { markTaskCompleteTool } from "./tools/mark-task-complete.js";
-import { createLoadSkillTool } from "./tools/load-skill.js";
+import { buildRegistry } from "./tools/build-registry.js";
 import { loadSkills } from "./skills/registry.js";
-import type { Skill } from "./skills/types.js";
 import { loadMcpConfig } from "./mcp/config.js";
 import { connectMcpServers } from "./mcp/connect-servers.js";
-import type { Tool } from "./agent/types.js";
-
-function buildRegistry(skills: Skill[], mcpTools: Tool[]): ToolRegistry {
-  const registry = new ToolRegistry();
-
-  // File operations
-  registry.register(readFileTool);
-  registry.register(writeFileTool);
-  registry.register(editFileTool);
-  registry.register(deleteFileTool);
-  registry.register(moveFileTool);
-  registry.register(createDirectoryTool);
-  registry.register(listDirectoryTool);
-  registry.register(readMultipleFilesTool);
-
-  // Search & code understanding
-  registry.register(searchFilesTool);
-  registry.register(getFileOutlineTool);
-  registry.register(getFileStatsTool);
-
-  // Execution & validation
-  registry.register(runCommandTool);
-  registry.register(runTestsTool);
-  registry.register(runLinterTool);
-  registry.register(typeCheckTool);
-
-  // Git (read-only)
-  registry.register(gitStatusTool);
-  registry.register(gitDiffTool);
-  registry.register(gitLogTool);
-  registry.register(gitBlameTool);
-
-  // Dependencies (read-only)
-  registry.register(readPackageManifestTool);
-  registry.register(listInstalledPackagesTool);
-
-  // Interaction
-  registry.register(askUserTool);
-  registry.register(markTaskCompleteTool);
-  registry.register(createLoadSkillTool(skills));
-
-  for (const tool of mcpTools) {
-    registry.register(tool);
-  }
-
-  return registry;
-}
 
 const program = new Command();
 

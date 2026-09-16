@@ -36,12 +36,16 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   return { ...actual, writeFile: vi.fn(async () => {}), unlink: vi.fn(async () => {}) };
 });
 
-const spawnedPlayers: Array<{ proc: EventEmitter & { kill: ReturnType<typeof vi.fn> }; file: string }> = [];
+const spawnedPlayers: Array<{
+  proc: EventEmitter & { kill: ReturnType<typeof vi.fn> };
+  file: string;
+  options: any;
+}> = [];
 
 vi.mock("node:child_process", () => ({
-  spawn: vi.fn((_bin: string, args: string[]) => {
+  spawn: vi.fn((_bin: string, args: string[], options?: any) => {
     const proc = Object.assign(new EventEmitter(), { kill: vi.fn() });
-    spawnedPlayers.push({ proc, file: args[args.length - 1] });
+    spawnedPlayers.push({ proc, file: args[args.length - 1], options });
     return proc;
   }),
 }));
@@ -162,5 +166,73 @@ describe("SpeechQueue", () => {
 
     queue.drainAndStop();
     expect(secondCall!.signal.aborted).toBe(true);
+  });
+
+  it("kills the active playback process with SIGKILL, not the default signal", async () => {
+    const queue = makeTestQueue();
+    queue.enqueueSentence("first");
+    resolveSpeechFor("first");
+    await vi.waitFor(() => expect(spawnedPlayers.length).toBe(1));
+
+    queue.drainAndStop();
+
+    expect(spawnedPlayers[0].proc.kill).toHaveBeenCalledTimes(1);
+    expect(spawnedPlayers[0].proc.kill).toHaveBeenCalledWith("SIGKILL");
+  });
+
+  it("spawns every playback process with stdio configured so it cannot capture the parent's stdin", async () => {
+    const queue = makeTestQueue();
+    queue.enqueueSentence("first");
+    queue.enqueueSentence("second");
+    resolveSpeechFor("first");
+    resolveSpeechFor("second");
+
+    await vi.waitFor(() => expect(spawnedPlayers.length).toBe(1));
+    spawnedPlayers[0].proc.emit("exit", 0);
+    await vi.waitFor(() => expect(spawnedPlayers.length).toBe(2));
+
+    for (const player of spawnedPlayers) {
+      const stdio = player.options?.stdio;
+      // Accept either the single-string shorthand or an equivalent
+      // per-stream array — either way stdin must not be inherited/piped
+      // in a way that could let the player consume keypress input meant
+      // for the parent's raw-mode interrupt listener.
+      if (typeof stdio === "string") {
+        expect(stdio).toBe("ignore");
+      } else {
+        expect(Array.isArray(stdio)).toBe(true);
+        expect(stdio[0]).toBe("ignore");
+      }
+    }
+  });
+
+  it("never spawns a second playback process before the previous one's exit event fires, even with variable per-call TTS delay", async () => {
+    const queue = makeTestQueue();
+    queue.enqueueSentence("first");
+    queue.enqueueSentence("second");
+    queue.enqueueSentence("third");
+
+    // Resolve TTS for all three after independent, out-of-order delays —
+    // simulates variable network latency rather than instant/manual
+    // resolution, without relying on real wall-clock timing for the
+    // assertion itself.
+    setTimeout(() => resolveSpeechFor("third"), 5);
+    setTimeout(() => resolveSpeechFor("first"), 15);
+    setTimeout(() => resolveSpeechFor("second"), 10);
+
+    await vi.waitFor(() => expect(spawnedPlayers.length).toBe(1), { timeout: 1000 });
+    // Only slot 0 ("first") may have spawned, regardless of which TTS
+    // call resolved first — assert no second spawn sneaks in while it's
+    // still "playing".
+    expect(spawnedPlayers[0].file).toContain(".mp3");
+    await new Promise((r) => setTimeout(r, 30));
+    expect(spawnedPlayers.length).toBe(1);
+
+    spawnedPlayers[0].proc.emit("exit", 0);
+    await vi.waitFor(() => expect(spawnedPlayers.length).toBe(2));
+    expect(spawnedPlayers.length).toBe(2); // still not 3 — second's exit hasn't fired yet
+
+    spawnedPlayers[1].proc.emit("exit", 0);
+    await vi.waitFor(() => expect(spawnedPlayers.length).toBe(3));
   });
 });

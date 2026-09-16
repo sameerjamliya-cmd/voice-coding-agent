@@ -10,7 +10,8 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/cli.js",
     "dev": "tsx src/cli.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "benchmark": "tsx benchmark/index.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",

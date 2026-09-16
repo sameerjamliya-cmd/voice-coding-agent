@@ -3,3 +3,7 @@ dist/
 .env
 *.log
 .voice-agent/
+
+# Generated benchmark run reports — timestamped artifacts from real API
+# runs, not source; regenerate anytime with `npm run benchmark`.
+benchmark/results/*.md
