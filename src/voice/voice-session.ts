@@ -25,8 +25,21 @@ export function assertVoiceEnvReady(): void {
 
 // Sentence boundary: '.', '?' or '!' followed by whitespace or end of
 // string.
+// A run of any characters, non-greedily extended until a terminator
+// (.!?) that is actually followed by whitespace or end-of-string — an
+// internal period with no trailing space (an abbreviation like "e.g.",
+// "Node.js", "example.com") is not a boundary, so `[\s\S]+?` just keeps
+// absorbing it into the current sentence instead of ending there.
+// The previous version (`[^.!?]+[.!?]+(\s+|$)`) excluded `.!?` from the
+// "any characters" portion entirely, which meant an internal period with
+// no trailing space couldn't be absorbed at all — the match attempt at
+// that position failed outright and the regex engine skipped forward,
+// silently dropping the characters right before that internal period
+// (e.g. "e.g. this is an example." lost its leading "e", "Node.js" lost
+// "I use Node"). Found and fixed while adding chunking test coverage for
+// exactly this abbreviation case.
 function splitIntoSentences(text: string): string[] {
-  const matches = text.match(/[^.!?]+[.!?]+(\s+|$)|[^.!?]+$/g);
+  const matches = text.match(/[\s\S]+?[.!?]+(?=\s|$)|[\s\S]+$/g);
   return matches ? matches.map((s) => s.trim()).filter(Boolean) : [];
 }
 

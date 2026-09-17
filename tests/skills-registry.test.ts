@@ -1,10 +1,20 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdtemp, writeFile, rm, readdir } from "node:fs/promises";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { loadSkills } from "../src/skills/registry.js";
 import { composeSystemPrompt } from "../src/skills/compose-system-prompt.js";
 import { createLoadSkillTool } from "../src/tools/load-skill.js";
+
+// Mirrors registry.ts's own DEFAULT_SKILLS_DIR resolution (package root /
+// skills), but from this test file's location instead — kept independent
+// of loadSkills() itself so these checks aren't validating the loader
+// against its own output.
+const REAL_SKILLS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "skills");
+const REAL_SKILL_FILENAMES = (await readdir(REAL_SKILLS_DIR)).filter((f) => f.endsWith(".md"));
+
+const DESCRIPTION_MAX_CHARS = 200;
 
 describe("loadSkills", () => {
   it("loads every skill file with required frontmatter fields", async () => {
@@ -160,4 +170,60 @@ describe("load_skill tool", () => {
     expect(result.error).toMatch(/no skill named/i);
     expect(result.output).toBeUndefined();
   });
+});
+
+// Generated from the actual skills/ directory contents at test time — not
+// a hand-listed array of skill names, which would silently drift out of
+// sync the moment a skill is added, renamed, or removed. Each check below
+// runs once per real skill file via it.each, so this scales automatically
+// (23 skills x 5 checks today; more skills later means more cases, no
+// test file edits needed).
+describe("every real skill file (generated from skills/ at test time)", () => {
+  it("found at least one skill file to check (sanity check that the directory resolution itself isn't broken)", () => {
+    expect(REAL_SKILL_FILENAMES.length).toBeGreaterThan(0);
+  });
+
+  it.each(REAL_SKILL_FILENAMES)("%s: frontmatter parses without error", async (filename) => {
+    const { readFile } = await import("node:fs/promises");
+    const raw = await readFile(join(REAL_SKILLS_DIR, filename), "utf-8");
+    expect(raw).toMatch(/^---\n[\s\S]*?\n---\n/);
+  });
+
+  it.each(REAL_SKILL_FILENAMES)("%s: name field matches the filename (minus .md)", async (filename) => {
+    const skills = await loadSkills(REAL_SKILLS_DIR);
+    const expectedName = filename.replace(/\.md$/, "");
+    const skill = skills.find((s) => s.name === expectedName);
+    expect(skill, `expected a skill named "${expectedName}" loaded from ${filename}`).toBeDefined();
+  });
+
+  it.each(REAL_SKILL_FILENAMES)(
+    "%s: description is non-empty and under the context-budget length ceiling",
+    async (filename) => {
+      const skills = await loadSkills(REAL_SKILLS_DIR);
+      const expectedName = filename.replace(/\.md$/, "");
+      const skill = skills.find((s) => s.name === expectedName)!;
+      expect(skill.description.length).toBeGreaterThan(0);
+      expect(skill.description.length).toBeLessThanOrEqual(DESCRIPTION_MAX_CHARS);
+    }
+  );
+
+  it.each(REAL_SKILL_FILENAMES)("%s: body content (below frontmatter) is non-empty", async (filename) => {
+    const skills = await loadSkills(REAL_SKILLS_DIR);
+    const expectedName = filename.replace(/\.md$/, "");
+    const skill = skills.find((s) => s.name === expectedName)!;
+    expect(skill.body.length).toBeGreaterThan(0);
+  });
+
+  it.each(REAL_SKILL_FILENAMES)(
+    "%s: load_skill with this exact name returns exactly this file's body",
+    async (filename) => {
+      const skills = await loadSkills(REAL_SKILLS_DIR);
+      const expectedName = filename.replace(/\.md$/, "");
+      const skill = skills.find((s) => s.name === expectedName)!;
+      const tool = createLoadSkillTool(skills);
+      const result = await tool.execute({ name: expectedName });
+      expect(result.error).toBeUndefined();
+      expect(result.output).toBe(skill.body);
+    }
+  );
 });
